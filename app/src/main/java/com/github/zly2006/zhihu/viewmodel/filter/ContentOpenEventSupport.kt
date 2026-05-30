@@ -109,6 +109,9 @@ object ContentOpenEventSupport {
         val idsToCheck = content.map { (targetType, targetId) ->
             buildContentKey(targetType, targetId)
         }
+        if (idsToCheck.isEmpty()) {
+            return@withContext emptySet()
+        }
         ContentFilterDatabase
             .getDatabase(context)
             .contentOpenEventDao()
@@ -125,8 +128,12 @@ object ContentOpenEventSupport {
         article.type == ArticleType.Answer &&
             article.id != currentArticleId &&
             article.id !in historyIds &&
-            buildContentKey(ContentType.ANSWER, article.id.toString()) !in openedContentKeys
+            !isOpenedAnswerArticle(article, openedContentKeys)
     }
+
+    fun isOpenedAnswerArticle(article: Article, openedContentKeys: Set<String>): Boolean =
+        article.type == ArticleType.Answer &&
+            buildContentKey(ContentType.ANSWER, article.id.toString()) in openedContentKeys
 
     fun partitionQuestionAnswerCandidates(
         candidates: List<Article>,

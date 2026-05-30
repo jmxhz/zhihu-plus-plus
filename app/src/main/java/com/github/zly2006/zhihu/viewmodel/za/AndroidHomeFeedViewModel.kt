@@ -25,6 +25,7 @@ import com.github.zly2006.zhihu.data.AccountData
 import com.github.zly2006.zhihu.data.AccountData.json
 import com.github.zly2006.zhihu.data.Feed
 import com.github.zly2006.zhihu.navigation.Article
+import com.github.zly2006.zhihu.navigation.ArticleType
 import com.github.zly2006.zhihu.navigation.resolveContent
 import com.github.zly2006.zhihu.ui.IHomeFeedViewModel
 import com.github.zly2006.zhihu.ui.PREFERENCE_NAME
@@ -60,6 +61,9 @@ private val ZHIHU_PP_ANDROID_HEADERS = createClientPlugin("ZhihuPPAndroidHeaders
 class AndroidHomeFeedViewModel :
     BaseFeedViewModel(),
     IHomeFeedViewModel {
+    // Cross-refresh dedup: content ids already shown in this process session
+    private val viewedContentIds = mutableSetOf<String>()
+
     override val initialUrl: String
         get() = "https://api.zhihu.com/topstory/recommend"
 
@@ -101,6 +105,7 @@ class AndroidHomeFeedViewModel :
 
                 // 收集所有待显示的项目
                 val itemsToDisplay = mutableListOf<FeedDisplayItem>()
+                val seenAnswerIds = mutableSetOf<Long>()
 
                 data
                     .map { it.jsonObject }
@@ -143,6 +148,11 @@ class AndroidHomeFeedViewModel :
                                 .jsonPrimitive.content
                             val authorName = lineAuthor.joStrMatch("type", "Text")["text"]!!.jsonPrimitive.content
                             if (routeDest is Article) {
+                                if (routeDest.type == ArticleType.Answer) {
+                                    if (!seenAnswerIds.add(routeDest.id)) {
+                                        return@forEach // duplicate answer within this response
+                                    }
+                                }
                                 routeDest.authorName = authorName
                                 routeDest.title = title
                                 routeDest.avatarSrc = avatar
@@ -167,15 +177,31 @@ class AndroidHomeFeedViewModel :
                 val preferences = context.getSharedPreferences(PREFERENCE_NAME, Context.MODE_PRIVATE)
                 // 前台先做本地已读过滤，再立即展示
                 val foregroundFilteredItems = ContentFilterExtensions.applyForegroundReadFilterToDisplayItems(context, itemsToDisplay)
+                // Cross-refresh dedup: filter out answers already shown in previous fetches
+                val crossDedupedItems = foregroundFilteredItems.filter { item ->
+                    val dest = item.navDestination
+                    if (dest is Article && dest.type == ArticleType.Answer) {
+                        dest.id.toString() !in viewedContentIds
+                    } else {
+                        true
+                    }
+                }
+                // Record shown content ids for cross-refresh dedup
+                crossDedupedItems.forEach { item ->
+                    val dest = item.navDestination
+                    if (dest is Article && dest.type == ArticleType.Answer) {
+                        viewedContentIds.add(dest.id.toString())
+                    }
+                }
                 if (!preferences.getBoolean("reverseBlock", false)) {
                     withContext(Dispatchers.Main) {
-                        addDisplayItems(foregroundFilteredItems)
+                        addDisplayItems(crossDedupedItems)
                     }
                 }
 
                 // 后台继续运行其余内容过滤
-                val filteredItems = ContentFilterExtensions.applyContentFilterToDisplayItems(context, foregroundFilteredItems)
-                val newDestinations = foregroundFilteredItems.map { it.navDestination }.toSet()
+                val filteredItems = ContentFilterExtensions.applyContentFilterToDisplayItems(context, crossDedupedItems)
+                val newDestinations = crossDedupedItems.map { it.navDestination }.toSet()
 
                 if (preferences.getBoolean("reverseBlock", false)) {
                     addDisplayItems(filteredItems)
@@ -218,6 +244,7 @@ class AndroidHomeFeedViewModel :
     override fun onUiContentClick(context: Context, feed: Feed, item: BaseFeedViewModel.FeedDisplayItem) {
         viewModelScope.launch(Dispatchers.IO) {
             sendReadStatusToServer(context, feed)
+            ContentFilterExtensions.recordDisplayItemInteraction(context, item)
         }
     }
 }

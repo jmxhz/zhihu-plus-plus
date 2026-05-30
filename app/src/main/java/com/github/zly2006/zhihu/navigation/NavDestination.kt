@@ -145,6 +145,14 @@ data object Account : TopLevelDestination {
 data object Daily : TopLevelDestination {
     override val name: String
         get() = "Daily"
+
+    @Serializable
+    data class DailyStoryContent(
+        val title: String,
+        val bodyHtml: String,
+        val imageUrl: String = "",
+        val shareUrl: String = "",
+    ) : NavDestination
 }
 
 @Serializable

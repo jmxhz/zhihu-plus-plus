@@ -17,7 +17,6 @@
 
 package com.github.zly2006.zhihu.ui
 
-import android.content.Intent
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -73,18 +72,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.github.zly2006.zhihu.MainActivity
 import com.github.zly2006.zhihu.data.AccountData
 import com.github.zly2006.zhihu.data.DailyStory
 import com.github.zly2006.zhihu.navigation.LocalNavigator
-import com.github.zly2006.zhihu.navigation.resolveContent
 import com.github.zly2006.zhihu.viewmodel.DailyViewModel
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonPrimitive
-import org.jsoup.Jsoup
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -326,16 +322,18 @@ fun DailyScreen(
                                     onClick = {
                                         if (!isTestMode) {
                                             scope.launch {
-                                                val jojo = AccountData.fetchGet(context, "https://daily.zhihu.com/api/7/story/${story.id}")!!
-                                                val body = Jsoup.parse(jojo["body"]!!.jsonPrimitive.content)
-                                                val url = body.selectFirst("a")?.attr("href")
-                                                val destination = url?.let(::resolveContent)
-                                                if (destination != null) {
-                                                    navigator.onNavigate(destination)
-                                                } else {
-                                                    val intent = Intent(Intent.ACTION_VIEW, story.url.toUri())
-                                                    context.startActivity(intent)
-                                                }
+                                                val jojo = AccountData.fetchGet(context, "https://daily.zhihu.com/api/7/story/${story.id}") ?: return@launch
+                                                val bodyHtml = jojo["body"]?.jsonPrimitive?.content ?: return@launch
+                                                val imageUrl = story.images.firstOrNull() ?: ""
+                                                val shareUrl = jojo["share_url"]?.jsonPrimitive?.content ?: story.url
+                                                navigator.onNavigate(
+                                                    com.github.zly2006.zhihu.navigation.Daily.DailyStoryContent(
+                                                        title = story.title,
+                                                        bodyHtml = bodyHtml,
+                                                        imageUrl = imageUrl,
+                                                        shareUrl = shareUrl,
+                                                    ),
+                                                )
                                             }
                                         }
                                     },

@@ -112,6 +112,29 @@ class ContentOpenEventSupportTest {
     }
 
     @Test
+    fun isOpenedAnswerArticle_usesAnswerIdNotQuestionId() {
+        val openedKeys = setOf(
+            ContentOpenEventSupport.buildContentKey(ContentType.QUESTION, "10"),
+            ContentOpenEventSupport.buildContentKey(ContentType.ANSWER, "11"),
+        )
+
+        assertEquals(
+            false,
+            ContentOpenEventSupport.isOpenedAnswerArticle(
+                Article(type = ArticleType.Answer, id = 10L),
+                openedKeys,
+            ),
+        )
+        assertEquals(
+            true,
+            ContentOpenEventSupport.isOpenedAnswerArticle(
+                Article(type = ArticleType.Answer, id = 11L),
+                openedKeys,
+            ),
+        )
+    }
+
+    @Test
     fun partitionQuestionAnswerCandidates_movesOpenedAnswersToPreviousAndKeepsFreshNext() {
         val partition = ContentOpenEventSupport.partitionQuestionAnswerCandidates(
             candidates = listOf(

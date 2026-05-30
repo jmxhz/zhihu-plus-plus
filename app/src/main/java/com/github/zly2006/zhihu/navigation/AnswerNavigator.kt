@@ -160,13 +160,26 @@ abstract class AnswerNavigator(
  */
 class QuestionAnswerNavigator(
     val questionId: Long,
+    private val sortOrder: String = "default",
+    initialNextItems: List<Article> = emptyList(),
+    initialPreviousItems: List<Article> = emptyList(),
 ) : AnswerNavigator("此问题") {
-    private val destinations = ArrayDeque<Article>()
-    private val previousQueue = mutableStateListOf<Article>()
+    private val destinations = ArrayDeque<Article>().also { queue ->
+        initialNextItems
+            .filter { it.type == ArticleType.Answer }
+            .forEach(queue::add)
+    }
+    private val previousQueue = mutableStateListOf<Article>().also { queue ->
+        initialPreviousItems
+            .filter { it.type == ArticleType.Answer }
+            .forEach(queue::add)
+    }
     private var nextUrl: String = ""
-    private val enqueuedNextIds = mutableSetOf<Long>()
-    private val enqueuedPrevIds = mutableSetOf<Long>()
+    private val enqueuedNextIds = mutableSetOf<Long>().also { ids -> ids.addAll(destinations.map { it.id }) }
+    private val enqueuedPrevIds = mutableSetOf<Long>().also { ids -> ids.addAll(previousQueue.map { it.id }) }
     private val knownOpenedIds = mutableSetOf<Long>()
+
+    internal fun queuedNextAnswerIdsForTesting(): List<Long> = destinations.map { it.id }
 
     override val previousAnswerPreview: CachedAnswerContent?
         get() {
@@ -203,11 +216,54 @@ class QuestionAnswerNavigator(
         )
     }
 
+    private suspend fun moveOpenedDestinationsToPrevious(context: Context, currentArticleId: Long) {
+        val historyIds = answerHistory.map { it.article.id }.toSet()
+        val idsToLookup = destinations
+            .asSequence()
+            .filter { it.type == ArticleType.Answer }
+            .map { it.id }
+            .filter { id ->
+                id != currentArticleId &&
+                    id !in historyIds &&
+                    id !in knownOpenedIds
+            }.toList()
+
+        if (idsToLookup.isNotEmpty()) {
+            val openedContentIds = ContentOpenEventSupport.getAlreadyOpenedContentIds(
+                context = context,
+                content = idsToLookup.map { ContentType.ANSWER to it.toString() },
+            )
+            knownOpenedIds += openedContentIds.mapNotNull { key ->
+                key.substringAfter(':', "").toLongOrNull()
+            }
+        }
+
+        val keptDestinations = ArrayDeque<Article>()
+        while (destinations.isNotEmpty()) {
+            val article = destinations.removeFirst()
+            val shouldSkipNext =
+                article.type != ArticleType.Answer ||
+                    article.id == currentArticleId ||
+                    article.id in historyIds
+            when {
+                shouldSkipNext -> Unit
+                article.id in knownOpenedIds -> {
+                    if (enqueuedPrevIds.add(article.id)) {
+                        previousQueue.add(0, article)
+                    }
+                }
+                else -> keptDestinations.addLast(article)
+            }
+        }
+        destinations.addAll(keptDestinations)
+    }
+
     private suspend fun ensureDestinations(context: Context, currentArticleId: Long) {
+        moveOpenedDestinationsToPrevious(context, currentArticleId)
         if (destinations.isNotEmpty()) return
         val historyIds = answerHistory.map { it.article.id }.toSet()
         while (destinations.isEmpty()) {
-            val url = nextUrl.ifEmpty { "https://www.zhihu.com/api/v4/questions/$questionId/feeds?limit=6" }
+            val url = nextUrl.ifEmpty { "https://www.zhihu.com/api/v4/questions/$questionId/feeds?limit=20&order=$sortOrder" }
             val jojo = AccountData.fetchGet(context, url) { signFetchRequest() } ?: return
             val data = AccountData.decodeJson<List<Feed>>(jojo["data"] ?: return)
             nextUrl = jojo["paging"]

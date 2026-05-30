@@ -41,6 +41,7 @@ import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
 import io.ktor.http.Cookie
 import io.ktor.http.CookieEncoding
@@ -49,6 +50,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.Url
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -62,6 +64,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.put
 import java.io.File
+import java.io.IOException
+import java.nio.channels.UnresolvedAddressException
 
 object AccountData {
     val json = Json {
@@ -275,11 +279,31 @@ object AccountData {
 
     private var lastRefreshCookie = 0L
 
+    private suspend fun requestWithRetry(
+        client: HttpClient,
+        url: String,
+        block: suspend HttpRequestBuilder.() -> Unit,
+    ): HttpResponse {
+        var lastNetworkError: Throwable? = null
+        repeat(3) { attempt ->
+            try {
+                return client.request(url) {
+                    block()
+                }
+            } catch (e: Throwable) {
+                if (e !is IOException && e !is UnresolvedAddressException) throw e
+                lastNetworkError = e
+                if (attempt < 2) {
+                    delay(300L * (attempt + 1))
+                }
+            }
+        }
+        throw lastNetworkError ?: IOException("Network request failed")
+    }
+
     suspend fun fetch(context: Context, url: String, block: suspend HttpRequestBuilder.() -> Unit = {}): JsonObject? {
         val client = httpClient(context)
-        val response = client.request(url) {
-            block()
-        }
+        val response = requestWithRetry(client, url, block)
         if (response.status == HttpStatusCode.NoContent) {
             return null
         }
@@ -293,9 +317,7 @@ object AccountData {
         val refreshToken = ZhihuCredentialRefresher.fetchRefreshToken(client)
         ZhihuCredentialRefresher.refreshZhihuToken(refreshToken, client)
         lastRefreshCookie = System.currentTimeMillis()
-        val retryResponse = client.request(url) {
-            block()
-        }
+        val retryResponse = requestWithRetry(client, url, block)
         val body1 = retryResponse.raiseForStatus().body<JsonElement>()
         return body1 as? JsonObject
     }

@@ -84,7 +84,11 @@ import com.github.zly2006.zhihu.WebviewActivity
 import com.github.zly2006.zhihu.data.AccountData
 import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.markdown.RenderMarkdown
+import com.github.zly2006.zhihu.navigation.Article
+import com.github.zly2006.zhihu.navigation.ArticleType
+import com.github.zly2006.zhihu.navigation.LocalNavigator
 import com.github.zly2006.zhihu.navigation.Question
+import com.github.zly2006.zhihu.navigation.QuestionAnswerNavigator
 import com.github.zly2006.zhihu.ui.components.CommentScreenComponent
 import com.github.zly2006.zhihu.ui.components.FeedCard
 import com.github.zly2006.zhihu.ui.components.FeedPullToRefresh
@@ -95,6 +99,7 @@ import com.github.zly2006.zhihu.ui.components.WebviewComp
 import com.github.zly2006.zhihu.ui.components.getShareText
 import com.github.zly2006.zhihu.ui.components.handleShareAction
 import com.github.zly2006.zhihu.util.fuckHonorService
+import com.github.zly2006.zhihu.viewmodel.ArticleViewModel
 import com.github.zly2006.zhihu.viewmodel.feed.QuestionFeedViewModel
 import com.github.zly2006.zhihu.viewmodel.filter.ContentOpenEventSupport
 import com.github.zly2006.zhihu.viewmodel.filter.ContentOpenFrom
@@ -153,9 +158,13 @@ fun QuestionScreen(
     testOverrides: QuestionScreenTestOverrides? = null,
 ) {
     val context = LocalContext.current
+    val navigator = LocalNavigator.current
     val preferences = context.getSharedPreferences(PREFERENCE_NAME, Context.MODE_PRIVATE)
     val viewModel: QuestionFeedViewModel = testOverrides?.viewModel ?: viewModel(key = "question_${question.questionId}") {
         QuestionFeedViewModel(question.questionId)
+    }
+    val sharedData = (context as? MainActivity)?.let { activity ->
+        viewModel<ArticleViewModel.ArticlesSharedData>(viewModelStoreOwner = activity)
     }
     val initialUiState = testOverrides?.initialUiState ?: QuestionScreenUiState(title = question.title)
     val initialTitle = initialUiState.title.ifEmpty { question.title }
@@ -521,7 +530,33 @@ fun QuestionScreen(
                 FeedCard(
                     item = item,
                     modifier = Modifier.testTag(questionFeedItemTag(item.stableKey)),
-                )
+                ) {
+                    val dest = navDestination
+                    if (dest is Article && dest.type == ArticleType.Answer && sharedData != null) {
+                        val idx = viewModel.displayItems.indexOf(item)
+                        val nextItems = if (idx >= 0) {
+                            viewModel.displayItems.drop(idx + 1).mapNotNull { feedItem ->
+                                feedItem.navDestination as? Article
+                            }
+                        } else {
+                            emptyList()
+                        }
+                        val previousItems = if (idx > 0) {
+                            viewModel.displayItems.take(idx).asReversed().mapNotNull { feedItem ->
+                                feedItem.navDestination as? Article
+                            }
+                        } else {
+                            emptyList()
+                        }
+                        sharedData.pendingNavigator = QuestionAnswerNavigator(
+                            questionId = question.questionId,
+                            sortOrder = viewModel.sortOrder,
+                            initialNextItems = nextItems,
+                            initialPreviousItems = previousItems,
+                        )
+                    }
+                    dest?.let { navigator.onNavigate(it) }
+                }
             }
         }
     }

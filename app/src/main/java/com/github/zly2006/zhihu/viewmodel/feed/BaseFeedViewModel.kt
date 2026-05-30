@@ -39,6 +39,7 @@ import com.github.zly2006.zhihu.data.actionText
 import com.github.zly2006.zhihu.data.target
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.NavDestination
+import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.ui.PREFERENCE_NAME
 import com.github.zly2006.zhihu.viewmodel.PaginationViewModel
 import com.github.zly2006.zhihu.viewmodel.filter.BlocklistManager
@@ -72,7 +73,11 @@ abstract class BaseFeedViewModel : PaginationViewModel<Feed>(typeOf<Feed>()) {
         val segmentSourceUrl: String? = null,
     ) {
         val stableKey: String
-            get() = localFeedId ?: localContentId ?: navDestination?.toString() ?: "$title|${summary.orEmpty()}|$details"
+            get() = localFeedId ?: localContentId ?: when (val dest = navDestination) {
+                is Article -> "article:${dest.type.name}:${dest.id}"
+                is Question -> "question:${dest.questionId}"
+                else -> dest?.toString()
+            } ?: "$title|${summary.orEmpty()}|$details"
     }
 
     override suspend fun processResponse(context: Context, data: List<Feed>, rawData: JsonArray) {

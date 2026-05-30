@@ -96,6 +96,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import kotlin.math.abs
 
 // HTML 点击事件监听器接口
 fun interface HtmlClickListener {
@@ -216,14 +217,16 @@ class CustomWebView : WebView {
     var onContentHeightCallback: ((Int) -> Unit)? = null
     var onPageStartedCallback: (() -> Unit)? = null
     var onDoubleTapCallback: (() -> Unit)? = null
+    private var touchDownX = 0f
+    private var touchDownY = 0f
+    private var touchMoved = false
     private val doubleTapDetector by lazy {
         GestureDetector(
             context,
             object : GestureDetector.SimpleOnGestureListener() {
-                override fun onDoubleTap(e: MotionEvent): Boolean {
-                    onDoubleTapCallback?.invoke()
-                    return false
-                }
+                override fun onDown(e: MotionEvent): Boolean = true
+
+                override fun onDoubleTap(e: MotionEvent): Boolean = handlePossibleDoubleTap(e)
             },
         )
     }
@@ -239,12 +242,62 @@ class CustomWebView : WebView {
      */
     override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
         parent?.requestDisallowInterceptTouchEvent(false)
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                touchDownX = event.x
+                touchDownY = event.y
+                touchMoved = false
+            }
+            android.view.MotionEvent.ACTION_MOVE -> {
+                if (abs(event.x - touchDownX) > 12f || abs(event.y - touchDownY) > 12f) {
+                    touchMoved = true
+                }
+            }
+        }
         doubleTapDetector.onTouchEvent(event)
         if (event.actionMasked == android.view.MotionEvent.ACTION_MOVE) {
             super.scrollTo(0, 0)
             return super.onTouchEvent(event)
         }
         return super.onTouchEvent(event)
+    }
+
+    private fun handlePossibleDoubleTap(event: MotionEvent): Boolean {
+        val callback = onDoubleTapCallback ?: return false
+        if (touchMoved || isInteractiveHitTest()) return false
+        val density = resources.displayMetrics.density.coerceAtLeast(1f)
+        val cssX = event.x / density
+        val cssY = event.y / density
+        evaluateJavascript(
+            """
+            (function() {
+              var selection = window.getSelection && window.getSelection();
+              if (selection && selection.toString().trim().length > 0) return false;
+              var el = document.elementFromPoint($cssX, $cssY);
+              while (el && el !== document.body && el !== document.documentElement) {
+                  var tag = (el.tagName || '').toLowerCase();
+                  if (tag === 'a' || tag === 'img' || tag === 'video' || tag === 'button') return false;
+                  if ((el.getAttribute && el.getAttribute('role') === 'button') || el.onclick) return false;
+                  el = el.parentElement;
+              }
+              return true;
+            })();
+            """.trimIndent(),
+        ) { result ->
+            if (result == "true") callback()
+        }
+        return true
+    }
+
+    private fun isInteractiveHitTest(): Boolean = when (hitTestResult.type) {
+        HitTestResult.IMAGE_TYPE,
+        HitTestResult.SRC_IMAGE_ANCHOR_TYPE,
+        HitTestResult.SRC_ANCHOR_TYPE,
+        HitTestResult.EMAIL_TYPE,
+        HitTestResult.PHONE_TYPE,
+        HitTestResult.GEO_TYPE,
+        -> true
+        else -> false
     }
 
     // JavaScript 接口类

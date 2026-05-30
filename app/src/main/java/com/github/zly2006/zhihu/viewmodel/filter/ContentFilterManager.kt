@@ -23,14 +23,14 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 /**
- * 内容曝光记录管理器。
- * 只负责维护“某个内容身份在 feed 中被看过几次、是否发生过交互”这类本地状态，
- * 真正的 feed 过滤编排在 [ContentFilterExtensions] 中完成。
+ * 内容过滤管理器
+ * 负责记录内容展示次数、用户交互，并提供过滤逻辑
  */
 class ContentFilterManager private constructor(
     context: Context,
 ) {
-    private val dao = ContentFilterDatabase.getDatabase(context).contentFilterDao()
+    private val database = ContentFilterDatabase.getDatabase(context)
+    private val dao = database.contentFilterDao()
 
     companion object {
         @Volatile
@@ -48,7 +48,9 @@ class ContentFilterManager private constructor(
         }
     }
 
-    /** 记录某个内容身份在 feed 中曝光了一次。 */
+    /**
+     * 记录内容展示
+     */
     suspend fun recordContentView(targetType: String, targetId: String) {
         withContext(Dispatchers.IO) {
             val recordId = ContentViewRecord.generateId(targetType, targetId)
@@ -70,7 +72,9 @@ class ContentFilterManager private constructor(
         }
     }
 
-    /** 记录某个内容身份在 feed 内发生过交互。 */
+    /**
+     * 记录用户交互（点击、点赞等）
+     */
     suspend fun recordContentInteraction(targetType: String, targetId: String) {
         withContext(Dispatchers.IO) {
             val recordId = ContentViewRecord.generateId(targetType, targetId)
@@ -78,15 +82,16 @@ class ContentFilterManager private constructor(
         }
     }
 
-    /** 批量查询这些内容身份是否已经出现在本地 feed 曝光记录里。 */
-    suspend fun getAlreadyViewedContentIds(content: List<Pair<String, String>>): Set<String> = withContext(Dispatchers.IO) {
+    suspend fun getRepeatedlyShownContentIds(content: List<Pair<String, String>>): Set<String> = withContext(Dispatchers.IO) {
         val idsToCheck = content.map { (targetType, targetId) ->
             ContentViewRecord.generateId(targetType, targetId)
         }
-        dao.getViewedContentIdsByIds(idsToCheck).toSet()
+        dao.getFilteredContentIdsByIds(idsToCheck).toSet()
     }
 
-    /** 获取曝光记录统计。 */
+    /**
+     * 获取统计信息
+     */
     suspend fun getFilterStats(): FilterStats = withContext(Dispatchers.IO) {
         val totalRecords = dao.getRecordCount()
         val filteredContent = dao.getFilteredContent()
@@ -99,7 +104,9 @@ class ContentFilterManager private constructor(
         )
     }
 
-    /** 清理过期曝光记录。 */
+    /**
+     * 清理过期数据
+     */
     suspend fun cleanupOldData() {
         withContext(Dispatchers.IO) {
             val cutoffTime = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(CLEANUP_INTERVAL_DAYS)
@@ -115,14 +122,18 @@ class ContentFilterManager private constructor(
         }
     }
 
-    /** 清除所有曝光记录（用于测试或重置）。 */
+    /**
+     * 清除所有数据（用于测试或重置）
+     */
     suspend fun clearAllData() {
         withContext(Dispatchers.IO) {
             dao.clearAllRecords()
         }
     }
 
-    /** 重置某个内容身份的曝光记录。 */
+    /**
+     * 重置特定内容的记录
+     */
     suspend fun resetContentRecord(targetType: String, targetId: String) {
         withContext(Dispatchers.IO) {
             val recordId = ContentViewRecord.generateId(targetType, targetId)

@@ -505,6 +505,10 @@ fun ZhihuMain(modifier: Modifier = Modifier, navController: NavHostController) {
                 composable<Daily> {
                     DailyScreen()
                 }
+                composable<Daily.DailyStoryContent> { navEntry ->
+                    val story: Daily.DailyStoryContent = navEntry.toRoute()
+                    DailyStoryScreen(story)
+                }
                 composable<History> {
                     LegacyLocalHistoryScreen(innerPadding)
                 }
