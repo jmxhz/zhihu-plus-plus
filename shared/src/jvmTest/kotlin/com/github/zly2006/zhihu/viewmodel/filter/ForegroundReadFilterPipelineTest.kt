@@ -19,12 +19,16 @@ package com.github.zly2006.zhihu.viewmodel.filter
 
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
+import com.github.zly2006.zhihu.navigation.Pin
+import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.shared.data.CommonFeed
 import com.github.zly2006.zhihu.shared.data.Feed
 import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
 import com.github.zly2006.zhihu.shared.data.Person
 import com.github.zly2006.zhihu.shared.data.toFeedDisplayItemNavDestinationJson
+import com.github.zly2006.zhihu.shared.filter.ContentOpenEventSupport
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonArray
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -69,6 +73,121 @@ class ForegroundReadFilterPipelineTest {
                 .getRecent()
                 .map { it.blockedReason },
         )
+        fixture.database.close()
+    }
+
+    @Test
+    fun blocksOpenedAnswerByAnswerIdAndKeepsOtherAnswersFromSameQuestion() = runTest {
+        val fixture = fixture()
+        val openedAnswer = answerItem("opened", answerId = 1, questionId = 10)
+        val otherAnswer = answerItem("other", answerId = 2, questionId = 10)
+        fixture.database.contentOpenEventDao().insert(
+            ContentOpenEvent(
+                contentType = ContentType.ANSWER,
+                contentId = "1",
+                questionId = 10,
+                openFrom = "test",
+            ),
+        )
+
+        val result = fixture.pipeline().filter(listOf(openedAnswer, otherAnswer))
+
+        assertEquals(listOf("other"), result.map { it.title })
+        assertEquals(
+            listOf("已阅读过回答"),
+            fixture.database
+                .blockedFeedRecordDao()
+                .getRecent()
+                .map { it.blockedReason },
+        )
+        fixture.database.close()
+    }
+
+    @Test
+    fun blocksOpenedArticlePinAndQuestionItems() = runTest {
+        val fixture = fixture()
+        val article = item("opened article", id = 1, details = "文章")
+        val pin = pinItem("opened pin", id = 2)
+        val question = questionItem("opened question", id = 3)
+        listOf(
+            ContentType.ARTICLE to "1",
+            ContentType.PIN to "2",
+            ContentType.QUESTION to "3",
+        ).forEach { (type, id) ->
+            fixture.database.contentOpenEventDao().insert(
+                ContentOpenEvent(
+                    contentType = type,
+                    contentId = id,
+                    openFrom = "test",
+                ),
+            )
+        }
+
+        val result = fixture.pipeline().filter(listOf(article, pin, question))
+
+        assertEquals(emptyList(), result)
+        assertEquals(
+            setOf("已阅读过文章", "已阅读过想法", "已阅读过问题"),
+            fixture.database
+                .blockedFeedRecordDao()
+                .getRecent()
+                .map { it.blockedReason }
+                .toSet(),
+        )
+        fixture.database.close()
+    }
+
+    @Test
+    fun blocksOpenedArticleEvenWhenAuthorIsFollowed() = runTest {
+        val fixture = fixture()
+        val item = item("followed opened article", id = 1, isFollowing = true)
+        fixture.database.contentOpenEventDao().insert(
+            ContentOpenEvent(
+                contentType = ContentType.ARTICLE,
+                contentId = "1",
+                openFrom = "test",
+            ),
+        )
+
+        val result = fixture.pipeline().filter(listOf(item))
+
+        assertEquals(emptyList(), result)
+        fixture.database.close()
+    }
+
+    @Test
+    fun blocksExtraReadAnswerKeyEvenWhenAuthorIsFollowed() = runTest {
+        val fixture = fixture()
+        val item = answerItem("followed opened", answerId = 1, questionId = 10, isFollowing = true)
+
+        val result = fixture.pipeline().filter(
+            items = listOf(item),
+            extraReadContentKeys = setOf(ContentOpenEventSupport.buildContentKey(ContentType.ANSWER, "1")),
+        )
+
+        assertEquals(emptyList(), result)
+        fixture.database.close()
+    }
+
+    @Test
+    fun blocksCloudReadAnswerKeyEvenWhenAuthorIsFollowed() = runTest {
+        val fixture = fixture()
+        val item = answerItem("followed cloud read", answerId = 1, questionId = 10, isFollowing = true)
+        fixture.database.cloudReadHistoryDao().upsertRecords(
+            listOf(
+                CloudReadHistoryRecord(
+                    contentType = ContentType.ANSWER,
+                    contentId = "1",
+                    questionId = "10",
+                    readTime = 1L,
+                    syncedAt = 1L,
+                ),
+            ),
+        )
+
+        val result = fixture.pipeline().filter(listOf(item))
+
+        assertEquals(emptyList(), result)
         fixture.database.close()
     }
 
@@ -125,6 +244,8 @@ class ForegroundReadFilterPipelineTest {
             settings = settings,
             contentFilterManager = manager,
             blockedFeedRecordDao = database.blockedFeedRecordDao(),
+            contentOpenEventDao = database.contentOpenEventDao(),
+            cloudReadHistoryDao = database.cloudReadHistoryDao(),
         )
     }
 
@@ -146,6 +267,69 @@ class ForegroundReadFilterPipelineTest {
             ),
         ),
         navDestinationJson = Article(type = ArticleType.Article, id = id).toFeedDisplayItemNavDestinationJson(),
+    )
+
+    private fun answerItem(
+        title: String,
+        answerId: Long,
+        questionId: Long,
+        isFollowing: Boolean = false,
+    ): FeedDisplayItem = FeedDisplayItem(
+        title = title,
+        summary = null,
+        details = "回答",
+        feed = CommonFeed(
+            target = Feed.AnswerTarget(
+                id = answerId,
+                url = "",
+                author = person(isFollowing),
+                question = Feed.QuestionTarget(
+                    id = questionId,
+                    url = "",
+                    type = "question",
+                    _title = "question",
+                ),
+            ),
+        ),
+        navDestinationJson = Article(type = ArticleType.Answer, id = answerId).toFeedDisplayItemNavDestinationJson(),
+    )
+
+    private fun pinItem(
+        title: String,
+        id: Long,
+        isFollowing: Boolean = false,
+    ): FeedDisplayItem = FeedDisplayItem(
+        title = title,
+        summary = null,
+        details = "想法",
+        feed = CommonFeed(
+            target = Feed.PinTarget(
+                id = id,
+                url = "",
+                author = person(isFollowing),
+                commentCount = 0,
+                content = JsonArray(emptyList()),
+            ),
+        ),
+        navDestinationJson = Pin(id).toFeedDisplayItemNavDestinationJson(),
+    )
+
+    private fun questionItem(
+        title: String,
+        id: Long,
+    ): FeedDisplayItem = FeedDisplayItem(
+        title = title,
+        summary = null,
+        details = "问题",
+        feed = CommonFeed(
+            target = Feed.QuestionTarget(
+                id = id,
+                url = "",
+                type = "question",
+                _title = title,
+            ),
+        ),
+        navDestinationJson = Question(questionId = id, title = title).toFeedDisplayItemNavDestinationJson(),
     )
 
     private fun person(isFollowing: Boolean): Person = Person(

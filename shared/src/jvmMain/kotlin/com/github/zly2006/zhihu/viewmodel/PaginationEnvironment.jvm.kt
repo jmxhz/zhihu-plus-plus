@@ -38,6 +38,7 @@ import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
 import com.github.zly2006.zhihu.shared.data.ZHIHU_CLEAR_ONLINE_HISTORY_URL
 import com.github.zly2006.zhihu.shared.data.ZHIHU_LAST_READ_TOUCH_URL
 import com.github.zly2006.zhihu.shared.data.ZhihuJson
+import com.github.zly2006.zhihu.shared.data.decodeOnlineHistoryPage
 import com.github.zly2006.zhihu.shared.data.encodeZhihuClearOnlineHistoryBody
 import com.github.zly2006.zhihu.shared.data.encodeZhihuLastReadTouchItems
 import com.github.zly2006.zhihu.shared.data.navDestination
@@ -62,6 +63,8 @@ import com.github.zly2006.zhihu.ui.ArticleAnswerSwitchState
 import com.github.zly2006.zhihu.util.buildArticleExportFileName
 import com.github.zly2006.zhihu.util.sanitizeArticleExportFileNamePart
 import com.github.zly2006.zhihu.viewmodel.CollectionItem
+import com.github.zly2006.zhihu.viewmodel.filter.CLOUD_READ_HISTORY_INCLUDE
+import com.github.zly2006.zhihu.viewmodel.filter.CloudReadHistorySyncer
 import com.github.zly2006.zhihu.viewmodel.filter.ContentDetailProvider
 import com.github.zly2006.zhihu.viewmodel.filter.ContentType
 import com.github.zly2006.zhihu.viewmodel.filter.applyContentFilterToDisplayItems
@@ -87,7 +90,9 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
@@ -149,6 +154,20 @@ class DesktopPaginationEnvironment(
     private val historyStorage = DesktopHistoryStorage()
     private val contentFilterDatabase = getContentFilterDatabase(desktopContentFilterDatabaseFile())
     private val localRecommendationEngine by lazy { createLocalRecommendationEngine() }
+    private val cloudReadHistorySyncScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val cloudReadHistorySyncer by lazy {
+        CloudReadHistorySyncer(
+            database = contentFilterDatabase,
+            fetchPage = { url ->
+                val json = fetchJson(url, CLOUD_READ_HISTORY_INCLUDE)
+                    ?: error("Empty online history response")
+                decodeOnlineHistoryPage(json)
+            },
+            onFailure = { error ->
+                Log.w("CloudReadHistorySyncer", "Failed to sync cloud read history", error)
+            },
+        )
+    }
 
     override fun httpClient(): HttpClient = store.createHttpClient(store.load().cookies)
 
@@ -179,6 +198,14 @@ class DesktopPaginationEnvironment(
 
     override fun localHistory(): List<NavDestination> =
         historyStorage.history
+
+    override suspend fun homeFeedReadContentKeys(): Set<String> =
+        ContentOpenEventSupport.trackedContentKeysFromDestinations(localHistory())
+
+    override fun scheduleCloudReadHistorySync() {
+        if (store.load().cookies["d_c0"] == null) return
+        cloudReadHistorySyncer.startSyncIfNeeded(cloudReadHistorySyncScope)
+    }
 
     override fun configureSignedRequest(builder: HttpRequestBuilder) {
         builder.signDesktopRequest(store.load().cookies)
@@ -324,10 +351,17 @@ class DesktopPaginationEnvironment(
 
     override suspend fun applyHomeFeedFilters(items: List<FeedDisplayItem>): HomeFeedFilterResult {
         val settings = settingsStore.toFeedFilterSettings()
+        val readContentKeys = if (settings.reverseBlock || !settings.enableContentFilter) {
+            emptySet()
+        } else {
+            scheduleCloudReadHistorySync()
+            homeFeedReadContentKeys()
+        }
         val foregroundItems = applyForegroundReadFilterToDisplayItems(
             settings = settings,
             database = contentFilterDatabase,
             items = items,
+            extraReadContentKeys = readContentKeys,
         )
         val filteredItems = applyContentFilterToDisplayItems(
             settings = settings,
@@ -400,6 +434,7 @@ class DesktopPaginationEnvironment(
 
     override suspend fun clearAllHistory() {
         historyStorage.clearAndSave()
+        cloudReadHistorySyncer.clearCache()
         if (store.load().cookies["d_c0"] == null) return
         val bodyText = encodeZhihuClearOnlineHistoryBody()
         store.signedFetchJson(ZHIHU_CLEAR_ONLINE_HISTORY_URL) {

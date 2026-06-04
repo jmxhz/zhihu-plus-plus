@@ -38,4 +38,26 @@ class ContentFilterDatabaseTest {
         assertEquals(listOf("noise"), keywords.map { it.keyword })
         database.close()
     }
+
+    @Test
+    fun createsJvmRoomDatabaseAndStoresCloudReadHistory() = runTest {
+        val database = getContentFilterDatabase(
+            createTempDirectory("content-filter-room").resolve("content-filter.db").toFile(),
+        )
+
+        database.cloudReadHistoryDao().upsertRecords(
+            listOf(
+                CloudReadHistoryRecord(
+                    contentType = ContentType.ANSWER,
+                    contentId = "1",
+                    questionId = "10",
+                    readTime = 1L,
+                    syncedAt = 1L,
+                ),
+            ),
+        )
+
+        assertEquals(1, database.cloudReadHistoryDao().getRecordCount())
+        database.close()
+    }
 }

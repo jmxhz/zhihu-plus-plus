@@ -253,6 +253,10 @@ interface PaginationEnvironment {
             reverseBlock = feedDisplaySettings().reverseBlock,
         )
 
+    suspend fun homeFeedReadContentKeys(): Set<String> = emptySet()
+
+    fun scheduleCloudReadHistorySync() = Unit
+
     suspend fun sendFeedReadStatus(feed: Feed) = Unit
 
     suspend fun recordContentInteraction(feed: Feed) = Unit

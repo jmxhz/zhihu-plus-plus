@@ -239,8 +239,14 @@ fun RenderMarkdown(
     enableScroll: Boolean = true,
     header: (@Composable () -> Unit)? = null,
     footer: (@Composable () -> Unit)? = null,
+    internalLinkCardContent: (@Composable (String) -> Unit)? = null,
 ) {
-    val document = remember(html) { htmlToMdAst(html) }
+    val document = remember(html, internalLinkCardContent) {
+        htmlToMdAst(
+            html = html,
+            internalLinkCardContent = internalLinkCardContent,
+        )
+    }
     val navigator = LocalNavigator.current
     val runtime = rememberMarkdownRuntime()
     val openExternalUrl = rememberExternalUrlOpener()

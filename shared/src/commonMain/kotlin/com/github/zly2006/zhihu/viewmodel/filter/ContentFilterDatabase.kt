@@ -29,8 +29,18 @@ import com.github.zly2006.zhihu.data.applyPlatformDriver
 import kotlinx.coroutines.Dispatchers
 
 @Database(
-    entities = [ContentViewRecord::class, BlockedKeyword::class, BlockedUser::class, BlockedContentRecord::class, BlockedTopic::class, BlockedFeedRecord::class, ContentOpenEvent::class],
-    version = 6,
+    entities = [
+        ContentViewRecord::class,
+        BlockedKeyword::class,
+        BlockedUser::class,
+        BlockedContentRecord::class,
+        BlockedTopic::class,
+        BlockedFeedRecord::class,
+        ContentOpenEvent::class,
+        CloudReadHistoryRecord::class,
+        CloudReadHistorySyncState::class,
+    ],
+    version = 7,
     exportSchema = false,
 )
 @ConstructedBy(ContentFilterDatabaseConstructor::class)
@@ -38,6 +48,8 @@ abstract class ContentFilterDatabase : RoomDatabase() {
     abstract fun contentFilterDao(): ContentFilterDao
 
     abstract fun contentOpenEventDao(): ContentOpenEventDao
+
+    abstract fun cloudReadHistoryDao(): CloudReadHistoryDao
 
     abstract fun blockedKeywordDao(): BlockedKeywordDao
 
@@ -147,10 +159,50 @@ private val migration5To6 = object : Migration(5, 6) {
     }
 }
 
+private val migration6To7 = object : Migration(6, 7) {
+    override fun migrate(connection: SQLiteConnection) {
+        connection.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `${CloudReadHistoryRecord.TABLE_NAME}` (
+                `contentType` TEXT NOT NULL,
+                `contentId` TEXT NOT NULL,
+                `questionId` TEXT,
+                `actionUrl` TEXT,
+                `readTime` INTEGER NOT NULL,
+                `syncedAt` INTEGER NOT NULL,
+                PRIMARY KEY(`contentType`, `contentId`)
+            )
+            """.trimIndent(),
+        )
+        connection.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS `index_${CloudReadHistoryRecord.TABLE_NAME}_contentType`
+            ON `${CloudReadHistoryRecord.TABLE_NAME}` (`contentType`)
+            """.trimIndent(),
+        )
+        connection.execSQL(
+            """
+            CREATE INDEX IF NOT EXISTS `index_${CloudReadHistoryRecord.TABLE_NAME}_readTime`
+            ON `${CloudReadHistoryRecord.TABLE_NAME}` (`readTime`)
+            """.trimIndent(),
+        )
+        connection.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `${CloudReadHistorySyncState.TABLE_NAME}` (
+                `syncKey` TEXT NOT NULL PRIMARY KEY,
+                `nextUrl` TEXT,
+                `lastSyncTime` INTEGER NOT NULL,
+                `fullSyncComplete` INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+    }
+}
+
 fun buildContentFilterDatabase(
     builder: Builder<ContentFilterDatabase>,
 ): ContentFilterDatabase = builder
-    .addMigrations(migration2To3, migration3To4, migration4To5, migration5To6)
+    .addMigrations(migration2To3, migration3To4, migration4To5, migration5To6, migration6To7)
     .fallbackToDestructiveMigration(true)
     .applyPlatformDriver()
     .setQueryCoroutineContext(Dispatchers.Default)

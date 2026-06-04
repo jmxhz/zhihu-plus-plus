@@ -17,17 +17,28 @@
 
 package com.github.zly2006.zhihu.ui
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.fleeksoft.ksoup.Ksoup
@@ -36,10 +47,12 @@ import com.github.zly2006.zhihu.markdown.RenderVideoBox
 import com.github.zly2006.zhihu.navigation.AnswerNavigator
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
+import com.github.zly2006.zhihu.navigation.LocalNavigator
 import com.github.zly2006.zhihu.navigation.NavDestination
 import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.navigation.TopLevelDestination
+import com.github.zly2006.zhihu.navigation.resolveContent
 import com.github.zly2006.zhihu.shared.data.DataHolder
 import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
 import com.github.zly2006.zhihu.shared.data.RecommendationMode
@@ -137,8 +150,92 @@ fun PinHtmlContent(html: String) {
             modifier = Modifier.questionSelectionWorkaround(),
             selectable = true,
             enableScroll = false,
+            internalLinkCardContent = { url ->
+                PinInternalLinkCard(url)
+            },
         )
     }
+}
+
+@Composable
+private fun PinInternalLinkCard(url: String) {
+    val destination = remember(url) { resolveContent(url) } ?: return
+    val navigator = LocalNavigator.current
+    val runtime = rememberPinScreenRuntime()
+    val linkCard = remember(url, destination) {
+        when (destination) {
+            is Article -> DataHolder.Pin.ContentLinkCard(
+                dataContentId = destination.id.toString(),
+                dataContentType = when (destination.type) {
+                    ArticleType.Answer -> "answer"
+                    ArticleType.Article -> "article"
+                },
+                url = url,
+            )
+            is Question -> DataHolder.Pin.ContentLinkCard(
+                dataContentId = destination.questionId.toString(),
+                dataContentType = "question",
+                url = url,
+            )
+            is Pin -> DataHolder.Pin.ContentLinkCard(
+                dataContentId = destination.id.toString(),
+                dataContentType = "pin",
+                url = url,
+            )
+            else -> null
+        }
+    } ?: return
+    var preview by remember(url) { mutableStateOf<PinLinkCardPreview?>(null) }
+    var isLoading by remember(url) { mutableStateOf(true) }
+
+    LaunchedEffect(url, linkCard) {
+        isLoading = true
+        preview = runtime.fetchLinkCardPreview(linkCard)
+        isLoading = false
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { navigator.onNavigate(destination) },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+        ) {
+            Text(
+                text = linkCardTypeLabel(linkCard.dataContentType),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                text = when {
+                    isLoading -> "Loading..."
+                    !preview?.title.isNullOrBlank() -> preview?.title.orEmpty()
+                    else -> url
+                },
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val previewText = preview?.preview
+            if (!previewText.isNullOrBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = previewText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
 }
 
 expect fun supportsPinHtmlWebView(): Boolean

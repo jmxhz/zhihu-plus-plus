@@ -17,6 +17,7 @@
 
 package com.github.zly2006.zhihu.markdown
 
+import androidx.compose.runtime.Composable
 import com.fleeksoft.ksoup.Ksoup
 import com.fleeksoft.ksoup.nodes.Element
 import com.fleeksoft.ksoup.nodes.TextNode
@@ -63,21 +64,30 @@ import com.fleeksoft.ksoup.nodes.Node as HtmlNode
 import com.hrm.markdown.parser.ast.Node as MarkdownNode
 
 private var parsingDocument: Document? = null
+private var parsingInternalLinkCardContent: (@Composable (String) -> Unit)? = null
 private const val ZHIHU_EQUATION_URL_PREFIX = "https://www.zhihu.com/equation?tex="
 
-fun htmlToMdAst(html: String): Document {
+fun htmlToMdAst(
+    html: String,
+    internalLinkCardContent: (@Composable (String) -> Unit)? = null,
+): Document {
     val document = Document()
     parsingDocument = document
-    Ksoup
-        .parseBodyFragment(html)
-        .body()
-        .childNodes()
-        .appendBlocksTo(document)
-    document.footnoteDefinitions.forEach { (_, definition) ->
-        document.appendChild(definition)
+    parsingInternalLinkCardContent = internalLinkCardContent
+    try {
+        Ksoup
+            .parseBodyFragment(html)
+            .body()
+            .childNodes()
+            .appendBlocksTo(document)
+        document.footnoteDefinitions.forEach { (_, definition) ->
+            document.appendChild(definition)
+        }
+        return document
+    } finally {
+        parsingDocument = null
+        parsingInternalLinkCardContent = null
     }
-    parsingDocument = null
-    return document
 }
 
 private fun List<HtmlNode>.appendBlocksTo(parent: ContainerNode) {
@@ -268,12 +278,23 @@ private fun convertElementToBlock(element: Element): List<MarkdownNode> = when (
     "a" -> {
         if (element.attr("class").contains("video-box")) {
             listOfNotNull(createVideoBoxBlock(element))
+        } else if (parsingInternalLinkCardContent != null) {
+            listOfNotNull(createInternalLinkCardBlock(element))
         } else {
             emptyList()
         }
     }
 
     else -> emptyList()
+}
+
+private fun createInternalLinkCardBlock(element: Element): MarkdownNode? {
+    val destination = normalizedLinkDestination(element.attr("href")).takeIf { it.isNotBlank() } ?: return null
+    if (resolveContent(destination) == null) return null
+    val content = parsingInternalLinkCardContent ?: return null
+    return NativeBlock {
+        content(destination)
+    }
 }
 
 private fun createCodeBlock(element: Element): FencedCodeBlock {
@@ -514,12 +535,7 @@ private fun extractInlineNode(node: HtmlNode): List<MarkdownNode> = when (node) 
         "code" -> listOf(InlineCode(node.text()))
 
         "a" -> {
-            val href = node.attr("href")
-            val destination = if (href.contains("link.zhihu.com")) {
-                runCatching { Url(href).parameters["target"] }.getOrNull() ?: href
-            } else {
-                href
-            }
+            val destination = normalizedLinkDestination(node.attr("href"))
             listOf(
                 Link(destination = destination).apply {
                     appendChildren(
@@ -582,6 +598,12 @@ private fun extractInlineNode(node: HtmlNode): List<MarkdownNode> = when (node) 
     }
 
     else -> emptyList()
+}
+
+private fun normalizedLinkDestination(href: String): String = if (href.contains("link.zhihu.com")) {
+    runCatching { Url(href).parameters["target"] }.getOrNull() ?: href
+} else {
+    href
 }
 
 private fun ContainerNode.appendChildren(children: List<MarkdownNode>) {

@@ -25,6 +25,8 @@ import com.github.zly2006.zhihu.navigation.NavDestination
 import com.github.zly2006.zhihu.navigation.Notification
 import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
+import com.github.zly2006.zhihu.navigation.resolveContent
+import com.github.zly2006.zhihu.shared.data.OnlineHistoryItem
 import com.github.zly2006.zhihu.viewmodel.filter.ContentFilterDatabase
 import com.github.zly2006.zhihu.viewmodel.filter.ContentOpenEvent
 import com.github.zly2006.zhihu.viewmodel.filter.ContentType
@@ -52,6 +54,8 @@ object ContentOpenFrom {
 object ContentOpenEventSupport {
     fun buildContentKey(type: String, id: String): String = "$type:$id"
 
+    fun buildContentKey(identity: TrackedContentIdentity): String = buildContentKey(identity.type, identity.id)
+
     fun toTrackedContentIdentity(destination: NavDestination): TrackedContentIdentity? = when (destination) {
         is Article -> {
             val type = when (destination.type) {
@@ -64,6 +68,37 @@ object ContentOpenEventSupport {
         is Pin -> TrackedContentIdentity(type = ContentType.PIN, id = destination.id.toString())
         else -> null
     }
+
+    fun toTrackedContentKey(destination: NavDestination): String? =
+        toTrackedContentIdentity(destination)?.let(::buildContentKey)
+
+    fun answerContentKeysFromDestinations(destinations: Iterable<NavDestination>): Set<String> =
+        destinations
+            .mapNotNull { destination ->
+                toTrackedContentIdentity(destination)
+                    ?.takeIf { identity -> identity.type == ContentType.ANSWER }
+                    ?.let(::buildContentKey)
+            }.toSet()
+
+    fun trackedContentKeysFromDestinations(destinations: Iterable<NavDestination>): Set<String> =
+        destinations
+            .mapNotNull { destination ->
+                toTrackedContentIdentity(destination)?.let(::buildContentKey)
+            }.toSet()
+
+    fun answerContentKeysFromOnlineHistory(items: Iterable<OnlineHistoryItem>): Set<String> =
+        items
+            .mapNotNull { item ->
+                val extra = item.data.extra
+                if (extra.contentType == ContentType.ANSWER && extra.contentToken.isNotBlank()) {
+                    buildContentKey(ContentType.ANSWER, extra.contentToken)
+                } else {
+                    resolveContent(item.data.action.url)
+                        ?.let(::toTrackedContentIdentity)
+                        ?.takeIf { identity -> identity.type == ContentType.ANSWER }
+                        ?.let(::buildContentKey)
+                }
+            }.toSet()
 
     fun inferOpenFrom(
         source: NavDestination?,
@@ -103,6 +138,9 @@ object ContentOpenEventSupport {
         database: ContentFilterDatabase,
         content: List<Pair<String, String>>,
     ): Set<String> = run {
+        if (content.isEmpty()) {
+            return@run emptySet()
+        }
         val idsToCheck = content.map { (targetType, targetId) ->
             buildContentKey(targetType, targetId)
         }

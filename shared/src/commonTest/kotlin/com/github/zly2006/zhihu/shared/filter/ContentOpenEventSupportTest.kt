@@ -25,6 +25,11 @@ import com.github.zly2006.zhihu.navigation.Notification
 import com.github.zly2006.zhihu.navigation.Person
 import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
+import com.github.zly2006.zhihu.shared.data.OnlineHistoryAction
+import com.github.zly2006.zhihu.shared.data.OnlineHistoryData
+import com.github.zly2006.zhihu.shared.data.OnlineHistoryExtra
+import com.github.zly2006.zhihu.shared.data.OnlineHistoryHeader
+import com.github.zly2006.zhihu.shared.data.OnlineHistoryItem
 import com.github.zly2006.zhihu.viewmodel.filter.ContentType
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -96,6 +101,69 @@ class ContentOpenEventSupportTest {
     }
 
     @Test
+    fun answerContentKeysFromDestinationsKeepsOnlyAnswers() {
+        val keys = ContentOpenEventSupport.answerContentKeysFromDestinations(
+            listOf(
+                Article(type = ArticleType.Answer, id = 11L),
+                Article(type = ArticleType.Article, id = 12L),
+                Question(questionId = 13L),
+                Pin(id = 14L),
+            ),
+        )
+
+        assertEquals(setOf(ContentOpenEventSupport.buildContentKey(ContentType.ANSWER, "11")), keys)
+    }
+
+    @Test
+    fun trackedContentKeysFromDestinationsKeepsAllTrackedContentTypes() {
+        val keys = ContentOpenEventSupport.trackedContentKeysFromDestinations(
+            listOf(
+                Article(type = ArticleType.Answer, id = 11L),
+                Article(type = ArticleType.Article, id = 12L),
+                Question(questionId = 13L),
+                Pin(id = 14L),
+                Person(id = "u1", urlToken = "user-1"),
+            ),
+        )
+
+        assertEquals(
+            setOf(
+                ContentOpenEventSupport.buildContentKey(ContentType.ANSWER, "11"),
+                ContentOpenEventSupport.buildContentKey(ContentType.ARTICLE, "12"),
+                ContentOpenEventSupport.buildContentKey(ContentType.QUESTION, "13"),
+                ContentOpenEventSupport.buildContentKey(ContentType.PIN, "14"),
+            ),
+            keys,
+        )
+    }
+
+    @Test
+    fun answerContentKeysFromOnlineHistoryUsesExtraTokenAndUrlFallback() {
+        val keys = ContentOpenEventSupport.answerContentKeysFromOnlineHistory(
+            listOf(
+                onlineHistoryItem(
+                    contentType = ContentType.ANSWER,
+                    contentToken = "21",
+                    actionUrl = "zhihu://questions/10",
+                ),
+                onlineHistoryItem(
+                    contentType = ContentType.ARTICLE,
+                    contentToken = "22",
+                    actionUrl = "https://www.zhihu.com/question/10/answer/23",
+                ),
+            ),
+        )
+
+        assertEquals(
+            setOf(
+                ContentOpenEventSupport.buildContentKey(ContentType.ANSWER, "21"),
+                ContentOpenEventSupport.buildContentKey(ContentType.ANSWER, "23"),
+            ),
+            keys,
+        )
+    }
+
+    @Test
     fun filterUnopenedAnswerArticlesExcludesCurrentHistoryAndOpenedAnswers() {
         val filtered = ContentOpenEventSupport.filterUnopenedAnswerArticles(
             candidates = listOf(
@@ -138,4 +206,22 @@ class ContentOpenEventSupportTest {
             partition.nextCandidates,
         )
     }
+
+    private fun onlineHistoryItem(
+        contentType: String,
+        contentToken: String,
+        actionUrl: String,
+    ): OnlineHistoryItem = OnlineHistoryItem(
+        cardType = "read_history",
+        data = OnlineHistoryData(
+            header = OnlineHistoryHeader(icon = "", title = "title"),
+            action = OnlineHistoryAction(type = "open_url", url = actionUrl),
+            extra = OnlineHistoryExtra(
+                contentToken = contentToken,
+                contentType = contentType,
+                readTime = 1L,
+                questionToken = "10",
+            ),
+        ),
+    )
 }

@@ -48,6 +48,7 @@ import com.github.zly2006.zhihu.shared.data.ZHIHU_CLEAR_ONLINE_HISTORY_URL
 import com.github.zly2006.zhihu.shared.data.ZHIHU_LAST_READ_TOUCH_URL
 import com.github.zly2006.zhihu.shared.data.ZhihuJson.json
 import com.github.zly2006.zhihu.shared.data.buildZhihuClearOnlineHistoryBody
+import com.github.zly2006.zhihu.shared.data.decodeOnlineHistoryPage
 import com.github.zly2006.zhihu.shared.data.encodeZhihuLastReadTouchItems
 import com.github.zly2006.zhihu.shared.data.navDestination
 import com.github.zly2006.zhihu.shared.data.zhihuLastReadTouchItem
@@ -67,6 +68,8 @@ import com.github.zly2006.zhihu.util.saveBitmapToGallery
 import com.github.zly2006.zhihu.util.signFetchRequest
 import com.github.zly2006.zhihu.viewmodel.CollectionItem
 import com.github.zly2006.zhihu.viewmodel.filter.AndroidContentFilterRuntime
+import com.github.zly2006.zhihu.viewmodel.filter.CLOUD_READ_HISTORY_INCLUDE
+import com.github.zly2006.zhihu.viewmodel.filter.CloudReadHistorySyncer
 import com.github.zly2006.zhihu.viewmodel.filter.ContentDetailProvider
 import com.github.zly2006.zhihu.viewmodel.filter.ContentFilterExtensions
 import com.github.zly2006.zhihu.viewmodel.filter.contentFilterSettings
@@ -92,7 +95,9 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.util.appendAll
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
@@ -120,6 +125,21 @@ open class SharedAndroidPaginationEnvironment(
     private val localRecommendationEngine by lazy { LocalRecommendationEngine(context) }
     private val settingsStore by lazy { androidSettingsStore(context) }
     private val userMessageSink by lazy { androidUserMessageSink(context) }
+    private val cloudReadHistorySyncScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val cloudReadHistorySyncer by lazy {
+        val database = getContentFilterDatabase(context)
+        CloudReadHistorySyncer(
+            database = database,
+            fetchPage = { url ->
+                val json = fetchJson(url, CLOUD_READ_HISTORY_INCLUDE)
+                    ?: error("Empty online history response")
+                decodeOnlineHistoryPage(json)
+            },
+            onFailure = { error ->
+                Log.w("CloudReadHistorySyncer", "Failed to sync cloud read history", error)
+            },
+        )
+    }
 
     override fun httpClient(): HttpClient {
         val loginForRecommendation = settingsStore.getBoolean("loginForRecommendation", true)
@@ -199,6 +219,13 @@ open class SharedAndroidPaginationEnvironment(
 
     override fun localHistory(): List<NavDestination> = HistoryStorage(context).history
 
+    override suspend fun homeFeedReadContentKeys(): Set<String> =
+        ContentOpenEventSupport.trackedContentKeysFromDestinations(localHistory())
+
+    override fun scheduleCloudReadHistorySync() {
+        cloudReadHistorySyncer.startSyncIfNeeded(cloudReadHistorySyncScope)
+    }
+
     override suspend fun addReadHistory(
         contentToken: String,
         contentTypeName: String,
@@ -274,10 +301,17 @@ open class SharedAndroidPaginationEnvironment(
         val settings = feedDisplaySettings()
         val filterSettings = context.contentFilterSettings()
         val filterDatabase = getContentFilterDatabase(context)
+        val readContentKeys = if (filterSettings.reverseBlock || !filterSettings.enableContentFilter) {
+            emptySet()
+        } else {
+            scheduleCloudReadHistorySync()
+            homeFeedReadContentKeys()
+        }
         val foregroundItems = ContentFilterExtensions.applyForegroundReadFilterToDisplayItems(
             settings = filterSettings,
             database = filterDatabase,
             items = items,
+            extraReadContentKeys = readContentKeys,
         )
         val filteredItems = ContentFilterExtensions.applyContentFilterToDisplayItems(
             settings = filterSettings,
@@ -351,6 +385,7 @@ open class SharedAndroidPaginationEnvironment(
 
     override suspend fun clearAllHistory() {
         HistoryStorage(context).clearAndSave()
+        cloudReadHistorySyncer.clearCache()
         AccountData.fetchPost(context, ZHIHU_CLEAR_ONLINE_HISTORY_URL) {
             signFetchRequest()
             contentType(KtorContentType.Application.Json)
