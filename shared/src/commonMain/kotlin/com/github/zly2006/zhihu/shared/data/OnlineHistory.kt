@@ -25,6 +25,11 @@ data class OnlineHistoryItem(
     val data: OnlineHistoryData,
 )
 
+data class OnlineHistoryPage(
+    val data: List<OnlineHistoryItem>,
+    val paging: ZhihuPaging? = null,
+)
+
 @Serializable
 data class OnlineHistoryData(
     val header: OnlineHistoryHeader,

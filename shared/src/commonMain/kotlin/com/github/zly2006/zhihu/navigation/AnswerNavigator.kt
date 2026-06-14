@@ -61,16 +61,13 @@ fun <T> answerNavigatorPageFromJson(
     val data = response["data"] ?: return AnswerNavigatorPage(emptyList(), "")
     return AnswerNavigatorPage(
         items = decodeItems(data),
-        nextUrl = response.answerNavigatorNextUrl(),
+        nextUrl = response["paging"]
+            ?.jsonObject
+            ?.get("next")
+            ?.jsonPrimitive
+            ?.content ?: "",
     )
 }
-
-private fun JsonObject.answerNavigatorNextUrl(): String =
-    this["paging"]
-        ?.jsonObject
-        ?.get("next")
-        ?.jsonPrimitive
-        ?.content ?: ""
 
 fun zhihuQuestionFeedsUrl(
     questionId: Long,
@@ -225,6 +222,7 @@ abstract class AnswerNavigator(
  */
 class QuestionAnswerNavigator(
     val questionId: Long,
+    val sortOrder: String = "default",
     repository: AnswerNavigatorRepository,
 ) : AnswerNavigator("此问题", repository) {
     private val destinations = ArrayDeque<Article>()
@@ -276,7 +274,7 @@ class QuestionAnswerNavigator(
         while (destinations.isEmpty()) {
             val page = repository.fetchQuestionFeeds(
                 questionId = questionId,
-                pageUrl = nextUrl.ifEmpty { null },
+                pageUrl = nextUrl.ifEmpty { zhihuQuestionFeedsUrl(questionId, limit = 6, order = sortOrder) },
             )
             nextUrl = page.nextUrl
             val data = page.items
@@ -593,7 +591,6 @@ class CollectionAnswerNavigator(
 /**
  * 基于回答详情中 [DataHolder.Answer.PaginationInfo] 导航。
  * 利用 nextAnswerIds 作为前进队列，prevAnswerIds 作为后退队列。
- * 每次加载新回答后调用 [updateFromPaginationInfo] 补充队列并去重。
  *
  * @param questionId 问题 ID，用于保持问题上下文
  * @param initialPaginationInfo 当前回答的分页信息
@@ -604,10 +601,10 @@ class PaginationInfoNavigator(
     repository: AnswerNavigatorRepository,
 ) : AnswerNavigator("此问题", repository) {
     // 前进队列（有序，无重复）
-    private val nextQueue = ArrayDeque<Long>().also { it.addAll(initialPaginationInfo.nextAnswerIds) }
+    private val nextQueue = ArrayDeque<Long>().also { it.addAll(initialPaginationInfo.nextAnswerIds.distinct()) }
 
     // 后退队列：firstOrNull() 为最近的上一个回答
-    private val prevQueue = ArrayDeque<Long>().also { it.addAll(initialPaginationInfo.prevAnswerIds) }
+    private val prevQueue = ArrayDeque<Long>().also { it.addAll(initialPaginationInfo.prevAnswerIds.distinct()) }
 
     // 续链用：记录最后已知的 answerId，下次 nextQueue 耗尽时从此续链
     private var lastKnownNextId: Long? = initialPaginationInfo.nextAnswerIds.lastOrNull()

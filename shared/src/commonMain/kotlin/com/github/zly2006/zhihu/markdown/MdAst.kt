@@ -79,7 +79,8 @@ fun htmlToMdAst(
             .parseBodyFragment(html)
             .body()
             .childNodes()
-            .appendBlocksTo(document)
+            .convertNodesToBlocks()
+            .forEach(document::appendChild)
         document.footnoteDefinitions.forEach { (_, definition) ->
             document.appendChild(definition)
         }
@@ -90,8 +91,16 @@ fun htmlToMdAst(
     }
 }
 
-private fun List<HtmlNode>.appendBlocksTo(parent: ContainerNode) {
-    convertNodesToBlocks().forEach(parent::appendChild)
+internal fun Document.previewImageUrls(): List<String> =
+    collectPreviewImageUrls()
+        .filter { it.isNotBlank() && !it.startsWith("data") }
+        .distinct()
+
+private fun MarkdownNode.collectPreviewImageUrls(): List<String> = when (this) {
+    is Figure -> listOf(imageUrl)
+    is Image -> listOf(destination)
+    is ContainerNode -> children.flatMap { it.collectPreviewImageUrls() }
+    else -> emptyList()
 }
 
 private fun List<HtmlNode>.convertNodesToBlocks(): List<MarkdownNode> {
@@ -205,9 +214,8 @@ private fun convertElementToBlock(element: Element): List<MarkdownNode> = when (
     )
 
     "p" -> {
-        fun Element.textChildNodes(): List<TextNode> = childNodes().filterIsInstance<TextNode>()
-
-        fun Element.textWithOnlyWhitespace(): Boolean = textChildNodes().all { it.text().isBlank() }
+        fun Element.textWithOnlyWhitespace(): Boolean =
+            childNodes().filterIsInstance<TextNode>().all { it.text().isBlank() }
 
         if (element.childNodeSize() == 0) {
             // empty paragraph
@@ -253,7 +261,7 @@ private fun convertElementToBlock(element: Element): List<MarkdownNode> = when (
 
     "blockquote" -> listOf(
         BlockQuote().apply {
-            element.childNodes().appendBlocksTo(this)
+            element.childNodes().convertNodesToBlocks().forEach(::appendChild)
         },
     )
 

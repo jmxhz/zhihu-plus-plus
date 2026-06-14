@@ -18,8 +18,10 @@
 package com.github.zly2006.zhihu.shared.data
 
 import io.ktor.client.HttpClient
+import io.ktor.client.call.body
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.request.get
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
@@ -49,7 +51,7 @@ class ZhihuDailyClientTest {
             assertEquals(zhihuDailyBeforeUrl("20260521"), url)
         }
 
-        val response = fetchDailyStoriesForDate(client, "20260520")
+        val response: DailyStoriesResponse = client.get(zhihuDailyBeforeUrl(nextDailyApiDate("20260520"))).body()
 
         assertEquals("20260520", response.date)
         assertEquals(1L, response.stories.single().id)
@@ -61,31 +63,57 @@ class ZhihuDailyClientTest {
             assertEquals(ZHIHU_DAILY_LATEST_URL, url)
         }
 
-        val response = fetchLatestDailyStories(client)
+        val response: DailyStoriesResponse = client.get(ZHIHU_DAILY_LATEST_URL).body()
 
         assertEquals("20260520", response.date)
     }
 
-    private fun dailyMockClient(assertUrl: (String) -> Unit): HttpClient = HttpClient(
+    @Test
+    fun fetchDailyStoryContentRequestsStoryEndpoint() = runTest {
+        val client = dailyMockClient(
+            content =
+                """
+                {
+                  "id": 42,
+                  "title": "daily title",
+                  "body": "<p>body</p>",
+                  "image": "https://example.com/cover.png",
+                  "share_url": "https://daily.zhihu.com/story/42"
+                }
+                """.trimIndent(),
+        ) { url ->
+            assertEquals(zhihuDailyStoryContentUrl(42), url)
+        }
+
+        val response = fetchDailyStoryContent(client, 42)
+
+        assertEquals("daily title", response.title)
+        assertEquals("<p>body</p>", response.bodyHtml)
+    }
+
+    private fun dailyMockClient(
+        content: String =
+            """
+            {
+              "date": "20260520",
+              "stories": [
+                {
+                  "id": 1,
+                  "title": "story",
+                  "url": "https://example.com/story",
+                  "hint": "hint",
+                  "images": [],
+                  "type": 0
+                }
+              ]
+            }
+            """.trimIndent(),
+        assertUrl: (String) -> Unit,
+    ): HttpClient = HttpClient(
         MockEngine { request ->
             assertUrl(request.url.toString())
             respond(
-                content =
-                    """
-                    {
-                      "date": "20260520",
-                      "stories": [
-                        {
-                          "id": 1,
-                          "title": "story",
-                          "url": "https://example.com/story",
-                          "hint": "hint",
-                          "images": [],
-                          "type": 0
-                        }
-                      ]
-                    }
-                    """.trimIndent(),
+                content = content,
                 status = HttpStatusCode.OK,
                 headers = headersOf(HttpHeaders.ContentType, "application/json"),
             )

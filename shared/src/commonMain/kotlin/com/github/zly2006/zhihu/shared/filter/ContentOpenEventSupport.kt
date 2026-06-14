@@ -142,24 +142,12 @@ object ContentOpenEventSupport {
             return@run emptySet()
         }
         val idsToCheck = content.map { (targetType, targetId) ->
-            buildContentKey(targetType, targetId)
+            "$targetType:$targetId"
         }
         database
             .contentOpenEventDao()
             .getOpenedContentKeysByKeys(idsToCheck)
             .toSet()
-    }
-
-    fun filterUnopenedAnswerArticles(
-        candidates: List<Article>,
-        openedContentKeys: Set<String>,
-        currentArticleId: Long,
-        historyIds: Set<Long> = emptySet(),
-    ): List<Article> = candidates.filter { article ->
-        article.type == ArticleType.Answer &&
-            article.id != currentArticleId &&
-            article.id !in historyIds &&
-            buildContentKey(ContentType.ANSWER, article.id.toString()) !in openedContentKeys
     }
 
     fun partitionQuestionAnswerCandidates(
@@ -181,10 +169,9 @@ object ContentOpenEventSupport {
                 return@forEach
             }
             if (article.id in openedAnswerIds) {
-                previousCandidates.add(article)
-            } else {
-                nextCandidates.add(article)
+                return@forEach
             }
+            nextCandidates.add(article)
         }
 
         return QuestionAnswerCandidatePartition(

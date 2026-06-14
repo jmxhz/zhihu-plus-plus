@@ -17,6 +17,7 @@
 
 package com.github.zly2006.zhihu.ui
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -38,9 +39,15 @@ import com.github.zly2006.zhihu.ui.ArticleAnswerTransitionDirection
 import com.github.zly2006.zhihu.viewmodel.AndroidArticlesSharedData
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel
 
+/**
+ * Android 平台的 Zhihu++ 主界面入口。
+ *
+ * 这里把 [MainActivity] 持有的导航、偏好设置、文章页 ViewModel、回答切换转场和 NLP 页面适配到共享 [ZhihuMain]。
+ * UI 结构仍由 common 主壳负责，Android 只提供生命周期、Activity、ViewModel 和平台专属页面实现。
+ */
 @Composable
 fun AndroidZhihuMain(navController: NavHostController) {
-    val activity = rememberAndroidZhihuMainActivity()
+    val activity = LocalActivity.current as MainActivity
     ZhihuMain(
         navController = navController,
         navigationState = rememberAndroidZhihuMainNavigationState(),

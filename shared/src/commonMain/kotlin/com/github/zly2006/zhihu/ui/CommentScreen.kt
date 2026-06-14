@@ -50,6 +50,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -118,7 +119,6 @@ import com.fleeksoft.ksoup.nodes.Node
 import com.fleeksoft.ksoup.nodes.TextNode
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.CommentHolder
-import com.github.zly2006.zhihu.navigation.DummyLocalNavigator
 import com.github.zly2006.zhihu.navigation.LocalNavigator
 import com.github.zly2006.zhihu.navigation.NavDestination
 import com.github.zly2006.zhihu.navigation.Person
@@ -126,9 +126,10 @@ import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.navigation.SegmentCommentHolder
 import com.github.zly2006.zhihu.navigation.resolveContent
-import com.github.zly2006.zhihu.shared.data.DataHolder
+import com.github.zly2006.zhihu.shared.platform.PlatformBackHandler
 import com.github.zly2006.zhihu.shared.platform.rememberExternalUrlOpener
 import com.github.zly2006.zhihu.shared.platform.rememberImagePreviewOpener
+import com.github.zly2006.zhihu.shared.util.twoDigitString
 import com.github.zly2006.zhihu.shared.viewmodel.CommentItem
 import com.github.zly2006.zhihu.viewmodel.comment.BaseCommentViewModel
 import com.github.zly2006.zhihu.viewmodel.comment.ChildCommentViewModel
@@ -345,6 +346,10 @@ private fun ClickableImageWithMenu(
     val openImagePreview = rememberImagePreviewOpener()
     val openExternalUrl = rememberExternalUrlOpener()
 
+    PlatformBackHandler(enabled = showContextMenu) {
+        showContextMenu = false
+    }
+
     fun handleAction(action: CommentImageMenuAction) {
         if (onAction != null) {
             onAction(action, imageUrl)
@@ -410,12 +415,19 @@ private fun ClickableImageWithMenu(
     }
 }
 
+/**
+ * 评论列表与回复页面。
+ *
+ * 页面根据 [content] 指向的文章、问题、想法或片段选择对应评论 ViewModel，展示父评论和子评论层级，并提供发送回复、图片预览、
+ * 长按图片菜单等交互。因为评论页经常以底部弹窗形式被其他页面嵌入，布局和状态不能假设自己拥有完整 NavHost。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CommentScreen(
     content: () -> NavDestination,
     activeCommentItem: CommentModel? = null,
     onChildCommentClick: (CommentModel) -> Unit,
+    listState: LazyListState = rememberLazyListState(),
     testOverrides: CommentScreenTestOverrides? = null,
 ) {
     val paginationEnvironment = rememberPaginationEnvironment(allowGuestAccess = false)
@@ -445,8 +457,6 @@ fun CommentScreen(
     val commentInputBarColor = MaterialTheme.colorScheme.surfaceContainer
     val actionChipColor = MaterialTheme.colorScheme.surfaceContainerHigh
     val actionChipIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-
-    val listState = rememberLazyListState()
 
     // 监控滚动位置以实现加载更多
     val loadMore = remember {
@@ -531,7 +541,7 @@ fun CommentScreen(
                         }
 
                         activeCommentItem == null && viewModel.allData.isEmpty() -> {
-                            // Note: see LazyColumn below for activeCommentItem != null
+                            // activeCommentItem != null 的空态在下面的 LazyColumn 中处理。
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Text("暂无评论")
                             }
@@ -664,7 +674,7 @@ fun CommentScreen(
                                             if (viewModel.allData.isEmpty()) {
                                                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                                     Text(
-                                                        // Note: activeCommentItem != null, so this is a child comment view
+                                                        // activeCommentItem 非空时这里展示的是子评论回复列表。
                                                         "暂无回复",
                                                     )
                                                 }
@@ -756,7 +766,7 @@ fun CommentScreen(
                                                     onChildCommentClick(commentItem)
                                                 }
                                             } else {
-                                                // Set reply target when swiping to reply
+                                                // 滑动回复时设置回复目标。
                                                 replyToComment = commentItem
                                             }
                                         },
@@ -777,7 +787,7 @@ fun CommentScreen(
                                                     onChildCommentClick(commentItem)
                                                 }
                                             } else {
-                                                // Set reply target when swiping to reply
+                                                // 滑动回复时设置回复目标。
                                                 replyToComment = commentItem
                                             }
                                         }
@@ -808,7 +818,7 @@ fun CommentScreen(
                     color = commentInputBarColor,
                 ) {
                     Column {
-                        // Reply indicator bar
+                        // 回复目标提示栏。
                         AnimatedVisibility(
                             visible = replyToComment != null,
                             enter = expandVertically() + fadeIn(),
@@ -1193,15 +1203,13 @@ private fun formatCommentTime(createdTimeSeconds: Long): String {
     val now = Clock.System.now().toLocalDateTime(zone)
     return when {
         dateTime.date == now.date -> dateTime.formatHms()
-        dateTime.year == now.year -> "${dateTime.monthNumber.twoDigits()}-${dateTime.day.twoDigits()} ${dateTime.formatHms()}"
-        else -> "${dateTime.year}-${dateTime.monthNumber.twoDigits()}-${dateTime.day.twoDigits()} ${dateTime.formatHms()}"
+        dateTime.year == now.year -> "${dateTime.monthNumber.twoDigitString()}-${dateTime.day.twoDigitString()} ${dateTime.formatHms()}"
+        else -> "${dateTime.year}-${dateTime.monthNumber.twoDigitString()}-${dateTime.day.twoDigitString()} ${dateTime.formatHms()}"
     }
 }
 
 private fun LocalDateTime.formatHms(): String =
-    "${hour.twoDigits()}:${minute.twoDigits()}:${second.twoDigits()}"
-
-private fun Int.twoDigits(): String = if (this < 10) "0$this" else toString()
+    "${hour.twoDigitString()}:${minute.twoDigitString()}:${second.twoDigitString()}"
 
 private fun AnnotatedString.Builder.processTextWithEmoji(
     text: String,
@@ -1291,53 +1299,6 @@ private fun AnnotatedString.Builder.dfsSimple(
 }
 
 @Composable
-@Suppress("SpellCheckingInspection")
-private fun CommentItemPreview() {
-    val comment = CommentModel(
-        item = DataHolder.Comment(
-            id = "123",
-            content = "<p>这是一条评论<br/>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vestibulum eleifend nisl vitae est tincidunt, non rhoncus magna cursus.</p>",
-            createdTime = Clock.System.now().toEpochMilliseconds() / 1000,
-            author = DataHolder.Comment.Author(
-                name = "作者",
-                avatarUrl = "https://i1.hdslb.com/bfs/face/b93b6ff0c1d434ae8026a4bedc82d0d883b5da95.jpg",
-                isOrg = false,
-                type = "people",
-                url = "",
-                urlToken = "",
-                id = "",
-                headline = "个人介绍",
-                avatarUrlTemplate = "",
-                isAdvertiser = false,
-                gender = 0,
-                userType = "",
-            ),
-            likeCount = 10,
-            childCommentCount = 5,
-            type = "",
-            url = "",
-            resourceType = "",
-            collapsed = false,
-            top = false,
-            isDelete = false,
-            reviewing = false,
-            isAuthor = false,
-            canCollapse = false,
-            childComments = emptyList(),
-        ),
-        clickTarget = null,
-    )
-    DummyLocalNavigator {
-        val runtime = rememberCommentScreenRuntime()
-        CommentItem(
-            comment,
-            runtime = runtime,
-            onChildCommentClick = { },
-        )
-    }
-}
-
-@Composable
 fun AuthorTag(authorTag: String) {
     Box(
         modifier = Modifier
@@ -1352,37 +1313,6 @@ fun AuthorTag(authorTag: String) {
             fontSize = 12.sp,
             lineHeight = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-fun CommentAuthorTagPreview() {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "作者名",
-            fontWeight = FontWeight.Bold,
-            fontSize = 16.sp,
-            modifier = Modifier.clickable { },
-        )
-
-        Spacer(modifier = Modifier.width(4.dp))
-        AuthorTag("作者")
-
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(
-            "回复",
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(
-            text = "zly2006",
-            fontWeight = FontWeight.Bold,
-            fontSize = 16.sp,
-            modifier = Modifier.clickable { },
         )
     }
 }

@@ -78,13 +78,13 @@ import com.github.zly2006.zhihu.shared.util.formatRelativeTime
 import com.github.zly2006.zhihu.ui.components.DraggableRefreshButton
 import com.github.zly2006.zhihu.ui.components.PaginatedList
 import com.github.zly2006.zhihu.ui.components.ProgressIndicatorFooter
-import com.github.zly2006.zhihu.viewmodel.NotificationPaginationEnvironment
+import com.github.zly2006.zhihu.viewmodel.NotificationEnvironment
 import com.github.zly2006.zhihu.viewmodel.NotificationViewModel
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 
 data class NotificationScreenRuntime(
-    val environment: NotificationPaginationEnvironment,
+    val environment: NotificationEnvironment,
     val showDebugCopy: Boolean,
 )
 
@@ -94,6 +94,12 @@ expect fun rememberNotificationScreenRuntime(
     settingsStore: NotificationSettingsStore,
 ): NotificationScreenRuntime
 
+/**
+ * 通知中心页面。
+ *
+ * 页面按通知设置过滤应用内展示项，加载通知列表并在进入页面后按设置自动标记已读。系统通知、应用内显示和自动已读由
+ * `NotificationSettingsStore` 管理，不走普通 `SettingsStore`，改动时要同时检查通知设置页。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotificationScreen() {

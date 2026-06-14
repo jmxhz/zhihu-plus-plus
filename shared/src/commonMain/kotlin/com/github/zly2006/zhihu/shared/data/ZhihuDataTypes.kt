@@ -92,23 +92,24 @@ fun <T : HttpClientEngineConfig> HttpClientConfig<T>.installZhihuCommonClientCon
     }
 }
 
-suspend fun fetchVerifiedZhihuAccount(client: HttpClient): JsonObject? {
-    val response = client.get(ZHIHU_ME_URL)
+suspend fun fetchVerifiedZhihuAccount(
+    client: HttpClient,
+    configureRequest: HttpRequestBuilder.() -> Unit = {},
+): JsonObject? {
+    val response = client.get(ZHIHU_ME_URL, configureRequest)
     if (response.status != HttpStatusCode.OK) {
         return null
     }
     return response.body<JsonObject>()
 }
 
-suspend fun fetchVerifiedZhihuProfile(client: HttpClient): ZhihuAccountProfile? =
-    fetchVerifiedZhihuAccount(client)?.let { ZhihuJson.decodeJson<ZhihuAccountProfile>(it) }
-
 suspend fun fetchVerifiedZhihuSession(
     client: HttpClient,
     cookies: Map<String, String>,
     userAgent: String = DEFAULT_ZHIHU_USER_AGENT,
+    configureRequest: HttpRequestBuilder.() -> Unit = {},
 ): ZhihuAccountSession? {
-    val account = fetchVerifiedZhihuAccount(client) ?: return null
+    val account = fetchVerifiedZhihuAccount(client, configureRequest) ?: return null
     val profile = ZhihuJson.decodeJson<ZhihuAccountProfile>(account)
     return ZhihuAccountSession(
         login = true,

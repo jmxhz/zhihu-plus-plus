@@ -21,11 +21,15 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +45,9 @@ import com.github.zly2006.zhihu.data.getOrFetch
 import com.github.zly2006.zhihu.navigation.AndroidAnswerNavigatorRepository
 import com.github.zly2006.zhihu.navigation.AnswerNavigatorRepository
 import com.github.zly2006.zhihu.navigation.NavDestination
+import com.github.zly2006.zhihu.shared.aigc.AIGC_MARKING_ENABLED_PREFERENCE_KEY
+import com.github.zly2006.zhihu.shared.aigc.AigcVoteClient
+import com.github.zly2006.zhihu.shared.aigc.AigcVoteVoter
 import com.github.zly2006.zhihu.shared.data.DataHolder
 import com.github.zly2006.zhihu.shared.data.Feed
 import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
@@ -71,9 +78,10 @@ import com.github.zly2006.zhihu.viewmodel.filter.AndroidContentFilterRuntime
 import com.github.zly2006.zhihu.viewmodel.filter.CLOUD_READ_HISTORY_INCLUDE
 import com.github.zly2006.zhihu.viewmodel.filter.CloudReadHistorySyncer
 import com.github.zly2006.zhihu.viewmodel.filter.ContentDetailProvider
-import com.github.zly2006.zhihu.viewmodel.filter.ContentFilterExtensions
 import com.github.zly2006.zhihu.viewmodel.filter.contentFilterSettings
 import com.github.zly2006.zhihu.viewmodel.filter.createBlocklistManager
+import com.github.zly2006.zhihu.viewmodel.filter.filterFeedDisplayItems
+import com.github.zly2006.zhihu.viewmodel.filter.filterForegroundReadItems
 import com.github.zly2006.zhihu.viewmodel.filter.getContentFilterDatabase
 import com.github.zly2006.zhihu.viewmodel.filter.recordFeedContentInteraction
 import com.github.zly2006.zhihu.viewmodel.local.LocalRecommendationEngine
@@ -83,7 +91,6 @@ import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.plugins.cache.HttpCache
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.cookies.HttpCookies
-import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.header
@@ -99,10 +106,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.File
+import java.util.UUID
 import com.github.zly2006.zhihu.navigation.Article as ArticleDestination
 import com.github.zly2006.zhihu.util.buildArticleExportHtml as buildAndroidArticleExportHtml
 import io.ktor.http.ContentType as KtorContentType
@@ -116,6 +124,10 @@ private val ZHIHU_PP_ANDROID_HEADERS = createClientPlugin("ZhihuPPAndroidHeaders
         request.headers.appendAll(AccountData.ANDROID_HEADERS)
     }
 }
+
+private const val AIGC_VOTE_CLIENT_ID_KEY = "aigcVoteClientId"
+private const val AIGC_VOTE_SERVER_URL_KEY = "aigcVoteServerUrl"
+private const val DEFAULT_ANDROID_AIGC_VOTE_SERVER_URL = "https://aigc-vote.ai.fintechedu.cn"
 
 open class SharedAndroidPaginationEnvironment(
     override val context: Context,
@@ -140,6 +152,21 @@ open class SharedAndroidPaginationEnvironment(
             },
         )
     }
+    private val aigcVoteHttpClient by lazy {
+        HttpClient {
+            install(ContentNegotiation) {
+                json(json)
+            }
+        }
+    }
+    private val aigcVoteClient by lazy {
+        AigcVoteClient(
+            httpClient = aigcVoteHttpClient,
+            baseUrl = aigcVoteServerUrl(),
+            clientId = aigcVoteClientId(),
+        )
+    }
+    private var lastAuthRefreshMillis = 0L
 
     override fun httpClient(): HttpClient {
         val loginForRecommendation = settingsStore.getBoolean("loginForRecommendation", true)
@@ -176,13 +203,51 @@ open class SharedAndroidPaginationEnvironment(
         }
     }
 
-    override suspend fun fetchJson(
-        url: String,
-        include: String,
-    ): JsonObject? =
-        AccountData.fetchGet(context, url) {
-            addIncludeAndSign(include)
+    override fun aigcVoteClient(): AigcVoteClient? =
+        if (settingsStore.getBoolean(AIGC_MARKING_ENABLED_PREFERENCE_KEY, false)) {
+            aigcVoteClient
+        } else {
+            null
         }
+
+    override fun aigcVoteVoter(): AigcVoteVoter? =
+        AccountData.data.self?.let { self ->
+            AigcVoteVoter(
+                id = self.id,
+                name = self.name,
+                urlToken = self.urlToken,
+                avatarUrl = self.avatarUrl,
+            )
+        }
+
+    override fun authenticatedCookies(): Map<String, String> {
+        val loginForRecommendation = settingsStore.getBoolean("loginForRecommendation", true)
+        return if (allowGuestAccess && !loginForRecommendation) {
+            emptyMap()
+        } else {
+            AccountData.data.cookies
+        }
+    }
+
+    override fun lastAuthRefreshMillis(): Long = lastAuthRefreshMillis
+
+    override fun updateLastAuthRefreshMillis(value: Long) {
+        lastAuthRefreshMillis = value
+    }
+
+    private fun aigcVoteServerUrl(): String =
+        settingsStore
+            .getString(AIGC_VOTE_SERVER_URL_KEY, DEFAULT_ANDROID_AIGC_VOTE_SERVER_URL)
+            .ifBlank { DEFAULT_ANDROID_AIGC_VOTE_SERVER_URL }
+
+    private fun aigcVoteClientId(): String {
+        settingsStore.getStringOrNull(AIGC_VOTE_CLIENT_ID_KEY)?.takeIf { it.isNotBlank() }?.let {
+            return it
+        }
+        val id = UUID.randomUUID().toString()
+        settingsStore.putString(AIGC_VOTE_CLIENT_ID_KEY, id)
+        return id
+    }
 
     override suspend fun handleFetchFailure(
         tag: String?,
@@ -206,10 +271,6 @@ open class SharedAndroidPaginationEnvironment(
         context.mainExecutor.execute {
             userMessageSink.showShortMessage("安卓端推荐加载失败: ${error.message}")
         }
-    }
-
-    override fun configureSignedRequest(builder: HttpRequestBuilder) {
-        builder.signFetchRequest()
     }
 
     override fun feedDisplaySettings(): FeedDisplaySettings = FeedDisplaySettings(
@@ -307,15 +368,13 @@ open class SharedAndroidPaginationEnvironment(
             scheduleCloudReadHistorySync()
             homeFeedReadContentKeys()
         }
-        val foregroundItems = ContentFilterExtensions.applyForegroundReadFilterToDisplayItems(
+        val foregroundItems = filterDatabase.filterForegroundReadItems(
             settings = filterSettings,
-            database = filterDatabase,
             items = items,
             extraReadContentKeys = readContentKeys,
         )
-        val filteredItems = ContentFilterExtensions.applyContentFilterToDisplayItems(
+        val filteredItems = filterDatabase.filterFeedDisplayItems(
             settings = filterSettings,
-            database = filterDatabase,
             items = foregroundItems,
             contentDetailProvider = ContentDetailProvider { ContentDetailCache.getOrFetch(context, it) },
             semanticMatcher = AndroidContentFilterRuntime.semanticMatcher,
@@ -568,34 +627,98 @@ open class SharedAndroidPaginationEnvironment(
         extraSectionsHtml = extraSectionsHtml,
     )
 
+    override suspend fun buildOfflineArticleExportHtml(
+        content: DataHolder.Content,
+        includeAppAttribution: Boolean,
+        httpClient: HttpClient,
+    ): String = buildOfflineArticleExportHtml(
+        context = context,
+        content = content,
+        includeAppAttribution = includeAppAttribution,
+        httpClient = httpClient,
+    )
+
     override fun saveImageToMediaStore(
         displayName: String,
         bitmap: Any,
     ) = saveBitmapToGallery(context, displayName, bitmap as android.graphics.Bitmap)
 
+    override fun saveHtmlToDownloads(
+        displayName: String,
+        htmlContent: String,
+    ): String = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        saveHtmlToDownloadsWithMediaStore(displayName, htmlContent)
+    } else {
+        saveHtmlToLegacyDownloads(displayName, htmlContent)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun saveHtmlToDownloadsWithMediaStore(
+        displayName: String,
+        htmlContent: String,
+    ): String {
+        val resolver = context.contentResolver
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "text/html")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Zhihu++")
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            ?: throw IllegalStateException("无法创建下载文件")
+
+        return try {
+            resolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
+                writer.write(htmlContent)
+            } ?: throw IllegalStateException("无法打开下载文件")
+
+            contentValues.clear()
+            contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+            resolver.update(uri, contentValues, null, null)
+            "Zhihu++/$displayName"
+        } catch (e: Exception) {
+            resolver.delete(uri, null, null)
+            throw e
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun saveHtmlToLegacyDownloads(
+        displayName: String,
+        htmlContent: String,
+    ): String {
+        val downloadsDir = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "Zhihu++",
+        )
+        if (!downloadsDir.exists() && !downloadsDir.mkdirs()) {
+            throw IllegalStateException("无法创建下载目录")
+        }
+
+        val file = File(downloadsDir, displayName)
+        file.writeText(htmlContent)
+        return file.absolutePath
+    }
+
     override fun articleImageExportRenderer(loadAssetText: (String) -> String): ArticleImageExportRenderer =
         AndroidArticleExportRenderer(context, loadAssetText)
 
-    override fun hasImageExportPermission(): Boolean = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
-    } else {
-        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-    }
+    override fun hasImageExportPermission(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+            PackageManager.PERMISSION_GRANTED
 
     override fun requiresHtmlExportPermission(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
 
     override fun requestImageExportPermission() {
-        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
-        } else {
-            arrayOf(
-                Manifest.permission.WRITE_EXTERNAL_STORAGE,
-                Manifest.permission.READ_EXTERNAL_STORAGE,
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            ActivityCompat.requestPermissions(
+                context as Activity,
+                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                1001,
             )
         }
-        ActivityCompat.requestPermissions(context as Activity, permissions, 1001)
     }
 
     override fun loadExportAssetText(fileName: String): String =
@@ -606,12 +729,12 @@ open class SharedAndroidPaginationEnvironment(
         }
 }
 
-class SharedAndroidNotificationPaginationEnvironment(
+class SharedAndroidNotificationEnvironment(
     context: Context,
     allowGuestAccess: Boolean,
     override val notificationSettingsStore: NotificationSettingsStore,
 ) : SharedAndroidPaginationEnvironment(context, allowGuestAccess),
-    NotificationPaginationEnvironment
+    NotificationEnvironment
 
 fun PaginationViewModel<*>.paginationEnvironment(context: Context): AndroidContextPaginationEnvironment =
     SharedAndroidPaginationEnvironment(context, allowGuestAccess)
@@ -622,15 +745,11 @@ actual fun rememberPaginationEnvironment(allowGuestAccess: Boolean): PaginationE
     return remember(context, allowGuestAccess) { SharedAndroidPaginationEnvironment(context, allowGuestAccess) }
 }
 
-fun PaginationViewModel<*>.notificationPaginationEnvironment(
+fun PaginationViewModel<*>.notificationEnvironment(
     context: Context,
     notificationSettingsStore: NotificationSettingsStore,
-): NotificationPaginationEnvironment =
-    SharedAndroidNotificationPaginationEnvironment(context, allowGuestAccess, notificationSettingsStore)
-
-fun PaginationEnvironment.androidContext(): Context =
-    (this as? AndroidContextPaginationEnvironment)?.context
-        ?: error("Android Context is required for this pagination path")
+): NotificationEnvironment =
+    SharedAndroidNotificationEnvironment(context, allowGuestAccess, notificationSettingsStore)
 
 fun PaginationViewModel<*>.refresh(context: Context) {
     refresh(paginationEnvironment(context))
@@ -641,16 +760,7 @@ fun PaginationViewModel<*>.loadMore(context: Context) {
 }
 
 fun PaginationViewModel<*>.httpClient(context: Context): HttpClient =
-    httpClient(paginationEnvironment(context))
-
-private fun HttpRequestBuilder.addIncludeAndSign(include: String) {
-    url {
-        if (include.isNotEmpty()) {
-            parameters["include"] = include
-        }
-    }
-    signFetchRequest()
-}
+    paginationEnvironment(context).httpClient()
 
 private fun Context.canSafelyShowDialog(): Boolean {
     val activity = this as? Activity ?: return false

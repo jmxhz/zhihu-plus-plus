@@ -1,7 +1,22 @@
-﻿package com.github.zly2006.zhihu.ui
+/*
+ * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation (version 3 only).
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 
-import android.content.Intent
-import android.net.Uri
+package com.github.zly2006.zhihu.ui
+
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,7 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -39,7 +54,6 @@ import com.github.zly2006.zhihu.markdown.RenderMarkdown
 import com.github.zly2006.zhihu.navigation.Daily
 import com.github.zly2006.zhihu.navigation.LocalNavigator
 import com.github.zly2006.zhihu.navigation.resolveContent
-import com.github.zly2006.zhihu.util.fuckHonorService
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,7 +61,7 @@ fun DailyStoryScreen(
     story: Daily.DailyStoryContent,
 ) {
     val navigator = LocalNavigator.current
-    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     val scrollState = rememberScrollState()
 
     Scaffold(
@@ -65,26 +79,25 @@ fun DailyStoryScreen(
                     IconButton(onClick = navigator.onNavigateBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "\u8fd4\u56de",
+                            contentDescription = "返回",
                         )
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        val shareUrl = story.shareUrl.ifEmpty { return@IconButton }
-                        val resolved = resolveContent(shareUrl)
-                        if (resolved != null) {
-                            navigator.onNavigate(resolved)
-                        } else {
-                            try {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(shareUrl)))
-                            } catch (_: Exception) {
+                    IconButton(
+                        onClick = {
+                            val shareUrl = story.shareUrl.ifEmpty { return@IconButton }
+                            val resolved = resolveContent(shareUrl)
+                            if (resolved != null) {
+                                navigator.onNavigate(resolved)
+                            } else {
+                                uriHandler.openUri(shareUrl)
                             }
-                        }
-                    }) {
+                        },
+                    ) {
                         Icon(
                             imageVector = Icons.Filled.OpenInBrowser,
-                            contentDescription = "\u67e5\u770b\u539f\u6587",
+                            contentDescription = "查看原文",
                         )
                     }
                 },
@@ -113,7 +126,6 @@ fun DailyStoryScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // Source label
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(bottom = 12.dp),
@@ -126,7 +138,7 @@ fun DailyStoryScreen(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "\u77e5\u4e4e\u65e5\u62a5",
+                    text = "知乎日报",
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
@@ -137,7 +149,7 @@ fun DailyStoryScreen(
 
             RenderMarkdown(
                 html = story.bodyHtml,
-                modifier = Modifier.fuckHonorService(),
+                modifier = Modifier,
                 selectable = true,
                 enableScroll = false,
             )

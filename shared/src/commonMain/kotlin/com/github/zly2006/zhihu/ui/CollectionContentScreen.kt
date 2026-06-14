@@ -66,33 +66,13 @@ import com.github.zly2006.zhihu.ui.components.ProgressIndicatorFooter
 import com.github.zly2006.zhihu.viewmodel.CollectionContentEnvironment
 import com.github.zly2006.zhihu.viewmodel.CollectionContentViewModel
 import com.github.zly2006.zhihu.viewmodel.CollectionHtmlExportDialogState
+import com.github.zly2006.zhihu.viewmodel.formatArticleDateTime
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
-import kotlinx.datetime.Instant
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
-
-fun formatCollectionUpdatedTime(seconds: Long): String {
-    val dateTime = Instant
-        .fromEpochSeconds(seconds)
-        .toLocalDateTime(TimeZone.currentSystemDefault())
-    return buildString {
-        append(dateTime.year.toString().padStart(4, '0'))
-        append('-')
-        append(dateTime.monthNumber.toString().padStart(2, '0'))
-        append('-')
-        append(dateTime.dayOfMonth.toString().padStart(2, '0'))
-        append(' ')
-        append(dateTime.hour.toString().padStart(2, '0'))
-        append(':')
-        append(dateTime.minute.toString().padStart(2, '0'))
-        append(':')
-        append(dateTime.second.toString().padStart(2, '0'))
-    }
-}
 
 /**
- * Instrumented tests inject a prefilled ViewModel plus side-effect stubs here so the screen can
- * be exercised deterministically without triggering refresh/export network work.
+ * 收藏内容页的测试替身配置。
+ *
+ * instrumentation 测试通过这里注入预填充 ViewModel 和副作用桩，避免刷新、加载更多或导出流程触发真实网络。
  */
 data class CollectionContentScreenTestOverrides(
     val viewModel: CollectionContentViewModel,
@@ -133,8 +113,7 @@ private fun CollectionContentScreenContent(
             includeImages = includeImages,
         )
     }
-    val environment = rememberPaginationEnvironment(allowGuestAccess = false)
-    val sharedData = environment.articleAnswerSwitchState()
+    val sharedData = collectionEnvironment.articleAnswerSwitchState()
 
     LaunchedEffect(testOverrides) {
         if (testOverrides == null && screenViewModel.allData.isEmpty()) {
@@ -230,7 +209,7 @@ private fun CollectionContentScreenContent(
                             "${screenViewModel.collection?.itemCount} 条收藏",
                             "${screenViewModel.collection?.likeCount} 个赞同",
                             "${screenViewModel.collection?.commentCount} 条评论",
-                            screenViewModel.collection?.updatedTime?.let { "${formatCollectionUpdatedTime(it)} 更新" },
+                            screenViewModel.collection?.updatedTime?.let { "${formatArticleDateTime(it)} 更新" },
                         ).fastJoinToString(" · "),
                         modifier = Modifier.testTag("collection_content_stats"),
                     )

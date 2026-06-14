@@ -36,6 +36,7 @@ object ZhihuMockApi {
     data class RecordedRequest(
         val method: HttpMethod,
         val url: String,
+        val headers: Map<String, List<String>>,
     )
 
     private data class Route(
@@ -60,7 +61,11 @@ object ZhihuMockApi {
                 context = context,
                 cookies = cookies,
                 engine = MockEngine { request ->
-                    requests += RecordedRequest(request.method, request.url.toString())
+                    requests += RecordedRequest(
+                        method = request.method,
+                        url = request.url.toString(),
+                        headers = request.headers.entries().associate { it.key to it.value },
+                    )
                     val route = routes.firstOrNull { it.predicate(request) }
                     if (route != null) {
                         route.responder(this, request)

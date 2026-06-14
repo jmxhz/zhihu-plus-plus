@@ -36,13 +36,14 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 data class AndroidPreparedExportWebView(
     val webView: WebView,
     val viewportWidthPx: Int,
     val contentHeightPx: Int,
 ) : PreparedArticleExportContent
+
+private const val ARTICLE_EXPORT_DPI = 200f
 
 class AndroidArticleExportRenderer(
     private val context: Context,
@@ -55,7 +56,8 @@ class AndroidArticleExportRenderer(
         suspendCancellableCoroutine { continuation ->
             val webView = createExportWebView()
             val mainHandler = Handler(Looper.getMainLooper())
-            val viewportWidthPx = resolveExportViewportWidthPx()
+            val viewportWidthPx = context.resources.displayMetrics.widthPixels
+                .coerceAtLeast(1)
             var isFinished = false
             var timeoutRunnable = Runnable {}
 
@@ -74,6 +76,11 @@ class AndroidArticleExportRenderer(
                 if (isFinished) return
                 isFinished = true
                 mainHandler.removeCallbacks(timeoutRunnable)
+                measureAndLayoutExportWebView(
+                    webView = webView,
+                    widthPx = viewportWidthPx,
+                    heightPx = contentHeightPx.coerceAtLeast(1),
+                )
                 if (continuation.isActive) {
                     continuation.resume(
                         AndroidPreparedExportWebView(
@@ -93,7 +100,13 @@ class AndroidArticleExportRenderer(
                 mainHandler.postDelayed({
                     if (isFinished) return@postDelayed
 
-                    val contentHeightPx = computeExportContentHeightPx(webView)
+                    val density = webView.resources.displayMetrics.density
+                    val contentHeightPx = maxOf(
+                        (webView.contentHeight * density).roundToInt(),
+                        webView.measuredHeight,
+                        webView.height,
+                        1,
+                    )
                     if (contentHeightPx <= 1 && attempt >= 24) {
                         fail(IllegalStateException("内容为空"))
                         return@postDelayed
@@ -209,22 +222,13 @@ class AndroidArticleExportRenderer(
         webView.layout(0, 0, widthPx.coerceAtLeast(1), safeHeight)
     }
 
-    fun resolveExportViewportWidthPx(): Int = context.resources.displayMetrics.widthPixels
-        .coerceAtLeast(1)
-
-    fun computeExportContentHeightPx(webView: WebView): Int {
-        val density = webView.resources.displayMetrics.density
-        val contentHeightPx = (webView.contentHeight * density).roundToInt()
-        return maxOf(contentHeightPx, webView.measuredHeight, webView.height, 1)
-    }
-
     override suspend fun captureExportBitmap(preparedWebView: PreparedArticleExportContent): Bitmap = withContext(Dispatchers.Main) {
         preparedWebView as AndroidPreparedExportWebView
         val rawWidth = preparedWebView.viewportWidthPx.coerceAtLeast(1)
         val rawHeight = preparedWebView.contentHeightPx.coerceAtLeast(1)
-        val maxPixels = 24_000_000.0
-        val rawPixels = rawWidth.toDouble() * rawHeight.toDouble()
-        val scale = if (rawPixels > maxPixels) sqrt(maxPixels / rawPixels) else 1.0
+        val scale = ARTICLE_EXPORT_DPI / context.resources.displayMetrics.densityDpi
+            .coerceAtLeast(1)
+            .toFloat()
         val bitmapWidth = (rawWidth * scale).roundToInt().coerceAtLeast(1)
         val bitmapHeight = (rawHeight * scale).roundToInt().coerceAtLeast(1)
 

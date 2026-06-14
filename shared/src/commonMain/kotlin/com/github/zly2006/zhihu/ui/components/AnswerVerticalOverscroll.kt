@@ -109,17 +109,11 @@ fun AnswerVerticalOverscroll(
     var hasTriggeredHaptic by remember { mutableStateOf(false) }
     var rawDragAccumulator by remember { mutableFloatStateOf(0f) }
 
-    // rememberUpdatedState ensures nestedScrollConnection always reads the latest values
-    // even though it is `remember`-ed without keys.
+    // nestedScrollConnection 没有带 key 重新 remember，因此用 rememberUpdatedState 保证它总能读到最新值。
     val currentCanGoPrevious by rememberUpdatedState(previousAnswer != null)
     val currentCanGoNext by rememberUpdatedState(nextAnswer != null)
     val currentOnNavigatePrevious by rememberUpdatedState(onNavigatePrevious)
     val currentOnNavigateNext by rememberUpdatedState(onNavigateNext)
-
-    fun dampedOffset(rawDelta: Float): Float {
-        val sign = if (rawDelta >= 0) 1f else -1f
-        return sign * maxOverscrollPx * tanh(abs(rawDelta) / (maxOverscrollPx * DAMPING_FACTOR))
-    }
 
     val nestedScrollConnection = remember {
         object : NestedScrollConnection {
@@ -136,7 +130,11 @@ fun AnswerVerticalOverscroll(
                             return Offset(0f, delta)
                         }
                         rawDragAccumulator = newRaw
-                        val newOffset = dampedOffset(rawDragAccumulator)
+                        val newOffset = dampedOverscrollOffset(
+                            rawDelta = rawDragAccumulator,
+                            maxOverscrollPx = maxOverscrollPx,
+                            dampingFactor = DAMPING_FACTOR,
+                        )
                         coroutineScope.launch { overscrollOffset.snapTo(newOffset) }
                         if (hasTriggeredHaptic && abs(newOffset) < triggerThresholdPx) {
                             hasTriggeredHaptic = false
@@ -166,7 +164,11 @@ fun AnswerVerticalOverscroll(
                     (overscrollOffset.value < 0 && delta < 0)
                 ) {
                     rawDragAccumulator += delta
-                    val newOffset = dampedOffset(rawDragAccumulator)
+                    val newOffset = dampedOverscrollOffset(
+                        rawDelta = rawDragAccumulator,
+                        maxOverscrollPx = maxOverscrollPx,
+                        dampingFactor = DAMPING_FACTOR,
+                    )
                     coroutineScope.launch { overscrollOffset.snapTo(newOffset) }
                     if (!hasTriggeredHaptic && abs(newOffset) >= triggerThresholdPx) {
                         hasTriggeredHaptic = true
@@ -215,8 +217,7 @@ fun AnswerVerticalOverscroll(
             .nestedScroll(nestedScrollConnection)
             .then(
                 if (isContentNonScrollable) {
-                    // Use Unit key so the gesture handler is never rebuilt mid-gesture;
-                    // current* refs (rememberUpdatedState) handle live value updates.
+                    // 使用 Unit key 避免手势处理中途重建 handler；current* 引用负责读取实时更新。
                     Modifier.pointerInput(Unit) {
                         awaitPointerEventScope {
                             while (true) {
@@ -256,7 +257,11 @@ fun AnswerVerticalOverscroll(
                                         ) {
                                             rawDragAccumulator = 0f
                                         }
-                                        val newOffset = dampedOffset(rawDragAccumulator)
+                                        val newOffset = dampedOverscrollOffset(
+                                            rawDelta = rawDragAccumulator,
+                                            maxOverscrollPx = maxOverscrollPx,
+                                            dampingFactor = DAMPING_FACTOR,
+                                        )
                                         coroutineScope.launch { overscrollOffset.snapTo(newOffset) }
                                         if (!hasTriggeredHaptic && abs(newOffset) >= triggerThresholdPx) {
                                             hasTriggeredHaptic = true
@@ -449,3 +454,12 @@ private fun AnswerPreviewCard(
 private const val MAX_OVERSCROLL_DP = 200f
 private const val TRIGGER_THRESHOLD_DP = 80f
 private const val DAMPING_FACTOR = 1.2f
+
+internal fun dampedOverscrollOffset(
+    rawDelta: Float,
+    maxOverscrollPx: Float,
+    dampingFactor: Float,
+): Float {
+    val sign = if (rawDelta >= 0) 1f else -1f
+    return sign * maxOverscrollPx * tanh(abs(rawDelta) / (maxOverscrollPx * dampingFactor))
+}

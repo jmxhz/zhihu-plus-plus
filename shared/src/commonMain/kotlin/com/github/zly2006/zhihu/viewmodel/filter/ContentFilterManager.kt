@@ -19,7 +19,7 @@ package com.github.zly2006.zhihu.viewmodel.filter
 import androidx.compose.runtime.Composable
 import com.github.zly2006.zhihu.shared.filter.ContentFilterStats
 import com.github.zly2006.zhihu.shared.filter.createContentFilterMaintenance
-import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
+import com.github.zly2006.zhihu.viewmodel.ContentBlocklistEnvironment
 
 typealias FilterStats = ContentFilterStats
 
@@ -65,9 +65,6 @@ class ContentFilterManager(
         return dao.getViewedContentIdsByIds(idsToCheck).toSet()
     }
 
-    /** 获取曝光记录统计。 */
-    suspend fun getFilterStats(): FilterStats = maintenance.loadFilterStats() ?: ContentFilterStats(0, 0, 0f)
-
     /** 清理过期曝光记录。 */
     suspend fun cleanupOldData() {
         maintenance.cleanupOldData()
@@ -77,22 +74,9 @@ class ContentFilterManager(
     suspend fun clearAllData() {
         maintenance.clearAllData()
     }
-
-    /** 重置某个内容身份的曝光记录。 */
-    suspend fun resetContentRecord(targetType: String, targetId: String) {
-        val recordId = ContentViewRecord.generateId(targetType, targetId)
-        val record = ContentViewRecord(
-            id = recordId,
-            targetType = targetType,
-            targetId = targetId,
-            viewCount = 0,
-            hasInteraction = false,
-        )
-        dao.insertOrUpdateViewRecord(record)
-    }
 }
 
-fun PaginationEnvironment.fetchBlockedUserIds(): Set<String> = blockedUserIds()
+fun ContentBlocklistEnvironment.fetchBlockedUserIds(): Set<String> = blockedUserIds()
 
 @Composable
 expect fun rememberBlockedFeedRecordDao(): BlockedFeedRecordDao

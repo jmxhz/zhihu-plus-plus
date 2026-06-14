@@ -54,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.github.zly2006.zhihu.navigation.LocalNavigator
 import com.github.zly2006.zhihu.navigation.NavDestination
+import com.github.zly2006.zhihu.shared.util.twoDigitString
 import com.github.zly2006.zhihu.viewmodel.filter.BlockedFeedRecord
 import com.github.zly2006.zhihu.viewmodel.filter.rememberBlockedFeedRecordDao
 import kotlinx.coroutines.launch
@@ -62,6 +63,12 @@ import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.Json
 import kotlin.time.Instant
 
+/**
+ * 屏蔽记录页面。
+ *
+ * 页面直接观察本地屏蔽记录 DAO，展示被过滤内容、屏蔽原因和重新打开内容的入口，并提供清空记录操作。它用于解释“为什么内容消失”，
+ * 所以新增过滤规则时应确保记录里能留下用户可理解的原因。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BlockedFeedHistoryScreen() {
@@ -201,8 +208,8 @@ private fun formatBlockedTime(timestampMillis: Long): String {
     val dateTime = Instant
         .fromEpochMilliseconds(timestampMillis)
         .toLocalDateTime(TimeZone.currentSystemDefault())
-    return "${(dateTime.month.ordinal + 1).toString().padStart(2, '0')}-" +
-        "${dateTime.day.toString().padStart(2, '0')} " +
-        "${dateTime.hour.toString().padStart(2, '0')}:" +
-        dateTime.minute.toString().padStart(2, '0')
+    return "${(dateTime.month.ordinal + 1).twoDigitString()}-" +
+        "${dateTime.day.twoDigitString()} " +
+        "${dateTime.hour.twoDigitString()}:" +
+        dateTime.minute.twoDigitString()
 }

@@ -64,12 +64,9 @@ import com.github.zly2006.zhihu.shared.platform.UserMessageSink
 import com.github.zly2006.zhihu.shared.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.shared.ui.ANSWER_DOUBLE_TAP_ACTION_PREFERENCE_KEY
 import com.github.zly2006.zhihu.shared.ui.AnswerDoubleTapAction
-import com.github.zly2006.zhihu.ui.PeopleProfileUiState
-import com.github.zly2006.zhihu.ui.PinLinkCardPreview
-import com.github.zly2006.zhihu.ui.QuestionScreenUiState
-import com.github.zly2006.zhihu.ui.components.CommentScreenComponent
 import com.github.zly2006.zhihu.ui.components.ShareDialogRuntime
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel.CachedAnswerContent
+import com.github.zly2006.zhihu.viewmodel.HistoryEnvironment
 import com.github.zly2006.zhihu.viewmodel.feed.BaseFeedViewModel
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
 import io.ktor.client.HttpClient
@@ -137,6 +134,12 @@ internal fun JsonObject?.booleanCompat(vararg keys: String): Boolean {
 @Composable
 expect fun rememberPinScreenRuntime(): PinScreenRuntime
 
+/**
+ * 想法正文的 HTML 渲染入口。
+ *
+ * 根据当前 WebView 设置选择平台 WebView 或 Compose Markdown 渲染。这样想法页、问题详情和文章页可以共享同一条“正文渲染模式”
+ * 语义，避免用户打开 WebView 后只有部分内容类型生效。
+ */
 @Composable
 fun PinHtmlContent(html: String) {
     if (rememberSettingsStore().getBoolean(ARTICLE_USE_WEBVIEW_PREFERENCE_KEY, false) &&
@@ -243,19 +246,13 @@ expect fun supportsPinHtmlWebView(): Boolean
 @Composable
 expect fun PinHtmlWebViewContent(html: String)
 
-@Composable
-fun PinCommentsSheet(
-    showComments: Boolean,
-    onDismiss: () -> Unit,
-    content: Pin,
-) {
-    CommentScreenComponent(
-        showComments = showComments,
-        onDismiss = onDismiss,
-        content = content,
-    )
-}
-
+/**
+ * 文章页 Compose UI 使用的运行时设置视图。
+ *
+ * 这些值保存在可变 state 中，是因为大多数阅读设置都应该在用户已经打开文章时即时生效：标题/底栏自动隐藏、回答切换、
+ * WebView 渲染和双击正文动作都不应要求重建页面。持久化仍由 [SettingsStore] 负责；这个类只镜像会影响当前 UI 的值，
+ * 并暴露文章页内弹窗会用到的显式保存入口。
+ */
 class ArticleScreenSettingsState(
     isTitleAutoHide: Boolean,
     autoHideArticleBottomBar: Boolean,
@@ -284,6 +281,12 @@ class ArticleScreenSettingsState(
     }
 }
 
+/**
+ * 订阅会改变文章页可见阅读行为的设置项。
+ *
+ * 设置页和文章页内弹窗可能修改同一批 key。这里通过监听这些 key 并原地更新 [ArticleScreenSettingsState]，
+ * 让文章 UI 在保留滚动位置、已加载内容和 ViewModel 状态的同时应用新设置。
+ */
 @Composable
 fun rememberArticleScreenSettingsState(): ArticleScreenSettingsState {
     val settings = rememberSettingsStore()
@@ -343,6 +346,12 @@ private fun SettingsStore.answerDoubleTapAction(): AnswerDoubleTapAction =
         ),
     )
 
+/**
+ * 共享文章页需要的平台服务。
+ *
+ * 文章页的布局、操作区和渲染路径由 common UI 负责；host 桥接和预加载器由平台提供，因为它们依赖 Android 的
+ * Activity/NavController 所有权，或 Desktop 的窗口和运行时服务。
+ */
 interface ArticleScreenRuntime {
     val articleHost: ArticleHost?
     val previewPreloader: ArticlePreviewPreloader
@@ -356,6 +365,12 @@ fun interface ArticlePreviewPreloader {
         onImageLoadFailed: () -> Unit,
     )
 }
+
+internal fun defaultArticleScreenRuntime(): ArticleScreenRuntime =
+    object : ArticleScreenRuntime {
+        override val articleHost: ArticleHost? = null
+        override val previewPreloader = ArticlePreviewPreloader { _, _, _, _ -> }
+    }
 
 @Composable
 expect fun rememberArticleScreenRuntime(): ArticleScreenRuntime
@@ -373,23 +388,11 @@ expect fun ArticleWebViewContent(
     onDoubleTap: () -> Unit,
 )
 
-@Composable
-fun ArticleMarkdownContent(
-    html: String,
-    modifier: Modifier,
-    header: @Composable () -> Unit,
-    footer: @Composable () -> Unit,
-) {
-    RenderMarkdown(
-        html = html,
-        modifier = modifier,
-        selectable = true,
-        enableScroll = false,
-        header = header,
-        footer = footer,
-    )
-}
-
+/**
+ * 文章附件中的视频入口渲染。
+ *
+ * 只处理知乎接口里 `attachment.type=video` 的情况，将视频 ID 和缩略图交给统一的视频卡片。普通正文视频仍由 Markdown/WebView 路径处理。
+ */
 @Composable
 fun ArticleVideoAttachmentContent(attachment: JsonElement?) {
     if (attachment
@@ -417,14 +420,13 @@ fun ArticleVideoAttachmentContent(attachment: JsonElement?) {
     }
 }
 
+/** 过滤部分设备文本选择菜单中的非预期系统项。 */
 expect fun Modifier.articleMarkdownSelectionWorkaround(): Modifier
 
 data class LoadedQuestionScreenData(
     val uiState: QuestionScreenUiState,
     val historyDestination: Question,
 )
-
-fun questionDetailPreview(html: String): String = Ksoup.parse(html).text().trim()
 
 internal fun loadedQuestionScreenData(
     question: Question,
@@ -445,6 +447,11 @@ internal fun loadedQuestionScreenData(
     )
 }
 
+/**
+ * 问题描述正文的渲染入口。
+ *
+ * 与文章和想法一致，优先遵循用户选择的 WebView/Markdown 渲染模式；当前平台不支持问题详情 WebView 时回落到 Compose Markdown。
+ */
 @Composable
 fun QuestionDetailContent(
     questionId: Long,
@@ -475,19 +482,12 @@ expect fun QuestionDetailWebViewContent(
     html: String,
 )
 
-@Composable
-fun QuestionCommentsSheet(
-    showComments: Boolean,
-    onDismiss: () -> Unit,
-    content: Question,
-) {
-    CommentScreenComponent(
-        showComments = showComments,
-        onDismiss = onDismiss,
-        content = content,
-    )
-}
-
+/**
+ * 文章页底部操作区使用的平台桥接。
+ *
+ * 可见按钮由 common UI 统一绘制，但语音朗读、系统分享、剪贴板和在浏览器打开知乎原文都需要平台实现。
+ * 把契约放在这里，可以让操作按钮作为 UI 被测试，同时把副作用留在 shared composable 之外。
+ */
 interface ArticleActionsRuntime {
     val ttsState: TtsState
     val shareRuntime: ShareDialogRuntime
@@ -496,24 +496,6 @@ interface ArticleActionsRuntime {
         title: String,
         content: String,
     )
-
-    fun shareArticle(
-        article: Article,
-        questionId: Long,
-        title: String,
-        authorName: String,
-    ) {
-        shareRuntime.share(article, articleActionText(article, questionId, title, authorName))
-    }
-
-    fun copyArticleLink(
-        article: Article,
-        questionId: Long,
-        title: String,
-        authorName: String,
-    ) {
-        shareRuntime.copyLink(article, articleActionText(article, questionId, title, authorName))
-    }
 
     fun openArticleInBrowser(article: Article)
 }
@@ -561,6 +543,12 @@ fun articleSpeechText(
         }
     }
 
+/**
+ * 文章页需要从外围应用获取的宿主级服务。
+ *
+ * 文章会参与历史记录、回答间导航、内容打开来源归因、TTS、剪贴板和 deep link 交接。这个接口刻意比 Activity 窄，
+ * 让 common 文章 UI 能同时运行在 Android、Desktop 和测试环境里，而不依赖平台类。
+ */
 interface ArticleHost {
     val articleNavController: NavHostController
     val articleAnswerSwitchState: ArticleAnswerSwitchState
@@ -579,12 +567,20 @@ interface ArticleHost {
     fun stopArticleSpeaking()
 }
 
+/**
+ * 同一问题下不同回答之间导航时使用的共享状态。
+ *
+ * 手势处理器会在导航前更新这里的状态，让平台适配层选择正确的入场/出场转场方向，并避免 route 切换时丢失待交接的
+ * navigator 或内容。它不能放在单个文章 composable 内，因为离开页和进入页都需要通过它协调。
+ */
 interface ArticleAnswerSwitchState {
     var navigator: AnswerNavigator?
     var pendingNavigator: AnswerNavigator?
     var pendingInitialContent: CachedAnswerContent?
     var navigatingFromAnswerSwitch: Boolean
+    var answerSwitchDisposeInProgress: Boolean
     var answerTransitionDirection: ArticleAnswerTransitionDirection
+    var isImmersiveMode: Boolean
 
     fun reset()
 
@@ -612,15 +608,27 @@ enum class TtsState(
     SwitchingChunk(true),
 }
 
+/**
+ * 影响应用主壳形态的不可变设置快照。
+ *
+ * 这些值决定底部栏有哪些入口、主 pager 从哪个页面开始、重选 tab 是否回到顶部/刷新，以及顶栏/底栏是否自动隐藏。
+ * [ZhihuMain] 按快照读取它们，避免把更新到一半的导航设置应用到主界面。
+ */
 data class ZhihuMainPreferenceSnapshot(
     val duo3HomeAccount: Boolean,
     val duo3NavStyle: Boolean,
     val tapToScrollToTopEnabled: Boolean,
     val autoHideBottomBar: Boolean,
-    val selectedBottomBarItemKeys: Set<String>,
+    val selectedBottomBarItemKeys: List<String>,
     val startDestination: TopLevelDestination,
 )
 
+/**
+ * 长生命周期主壳使用的 [ZhihuMainPreferenceSnapshot] 可变持有者。
+ *
+ * 用户每次修改外观设置时不应该重建 NavHost。设置页退出时调用 [reload] 即可；主壳会原地更新底部栏和 pager 状态，
+ * 同时保持已加载 tab、返回栈和滚动位置稳定。
+ */
 class ZhihuMainPreferenceState(
     private val readSnapshot: () -> ZhihuMainPreferenceSnapshot,
 ) {
@@ -655,6 +663,12 @@ fun rememberZhihuMainPreferenceState(
     readSnapshot: () -> ZhihuMainPreferenceSnapshot,
 ): ZhihuMainPreferenceState = remember { ZhihuMainPreferenceState(readSnapshot) }
 
+/**
+ * 当前平台注入 [ZhihuMain] 的导航回调。
+ *
+ * common UI 的所有点击都通过这个对象发起导航。平台代码负责把旧的顶层目的地映射到
+ * [com.github.zly2006.zhihu.navigation.MainTabs]、记录内容打开来源，并处理视频这类平台专用目标。
+ */
 data class ZhihuMainNavigationState(
     val mainTabNavigationTarget: TopLevelDestination?,
     val navigate: (NavDestination) -> Unit,
@@ -670,6 +684,12 @@ data class AccountSettingsAccountState(
     val urlToken: String? = null,
 )
 
+/**
+ * 账号设置页消费的平台与账号服务。
+ *
+ * composable 自己负责视觉层级：资料头部、快捷入口、设置入口和关于/许可证区域。登录、扫码、退出、版本信息和主 tab 选择仍由平台注入，
+ * 这样同一套账号 UI 可以运行在 Android、Desktop、预览和测试中。
+ */
 data class AccountSettingsRuntime(
     val accountState: State<AccountSettingsAccountState>,
     val refreshProfile: suspend () -> Unit,
@@ -739,6 +759,12 @@ data class HomeUpdateAnnouncement(
     val isNightly: Boolean,
 )
 
+/**
+ * 首页信息流界面的运行时依赖集合。
+ *
+ * 首页同时组合推荐数据、账号入口、更新横幅、未读通知和可选账号面板行为。把这些依赖集中在一起后，页面本身可以专注布局：
+ * 顶部操作区、信息流列表、刷新入口和临时公告。
+ */
 data class HomeScreenRuntime(
     val account: HomeAccountState,
     val updateAnnouncement: HomeUpdateAnnouncement?,
@@ -759,7 +785,7 @@ fun interface ArticleReadHistoryRecorder {
 
 @Composable
 fun rememberArticleReadHistoryRecorder(): ArticleReadHistoryRecorder {
-    val environment = rememberPaginationEnvironment(false)
+    val environment: HistoryEnvironment = rememberPaginationEnvironment(false)
     return remember(environment) {
         ArticleReadHistoryRecorder { article ->
             environment.addReadHistory(
@@ -798,5 +824,20 @@ expect fun rememberBlocklistSettingsPlatformRuntime(
 
 @Composable
 expect fun rememberZhihuHttpClient(): HttpClient
+
+/**
+ * 沉浸式阅读时控制系统栏（状态栏/导航栏）的显隐。
+ * Android 会隐藏状态栏并允许滑动唤出；Desktop/iOS 为空操作。
+ */
+@Composable
+expect fun ArticleImmersiveModeEffect(immersive: Boolean)
+
+/**
+ * 离开沉浸式阅读时恢复系统状态栏。
+ * 调用时机：导航目的地从 Article 切换到非 Article 时。
+ * Android 会显示状态栏；Desktop/iOS 为空操作。
+ */
+@Composable
+expect fun LeaveImmersiveModeCleanup()
 
 expect fun Modifier.questionSelectionWorkaround(): Modifier

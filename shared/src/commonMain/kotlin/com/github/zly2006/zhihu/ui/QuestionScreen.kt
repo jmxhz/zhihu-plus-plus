@@ -73,11 +73,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.fleeksoft.ksoup.Ksoup
 import com.github.zly2006.zhihu.data.decodeQuestionContentDetail
+import com.github.zly2006.zhihu.navigation.Article
+import com.github.zly2006.zhihu.navigation.ArticleType
+import com.github.zly2006.zhihu.navigation.LocalNavigator
 import com.github.zly2006.zhihu.navigation.Question
+import com.github.zly2006.zhihu.navigation.QuestionAnswerNavigator
+import com.github.zly2006.zhihu.shared.data.navDestination
 import com.github.zly2006.zhihu.shared.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.shared.platform.rememberUserMessageSink
 import com.github.zly2006.zhihu.shared.platform.rememberZhihuWebUrlOpener
+import com.github.zly2006.zhihu.ui.components.CommentScreenComponent
 import com.github.zly2006.zhihu.ui.components.FeedCard
 import com.github.zly2006.zhihu.ui.components.FeedPullToRefresh
 import com.github.zly2006.zhihu.ui.components.PaginatedList
@@ -86,17 +93,16 @@ import com.github.zly2006.zhihu.ui.components.ShareDialog
 import com.github.zly2006.zhihu.ui.components.getShareText
 import com.github.zly2006.zhihu.ui.components.handleShareAction
 import com.github.zly2006.zhihu.ui.components.rememberShareDialogRuntime
-import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
+import com.github.zly2006.zhihu.viewmodel.ContentLoadEnvironment
 import com.github.zly2006.zhihu.viewmodel.feed.QuestionFeedViewModel
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
-import io.ktor.client.call.body
-import io.ktor.client.request.get
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.JsonObject
 
 /**
- * Instrumented tests inject fixed state and side-effect callbacks here so QuestionScreen can be
- * exercised offline without triggering real detail fetches, follow requests, or comment loading.
+ * 问题页的测试替身配置。
+ *
+ * instrumentation 测试通过这里注入固定状态和副作用回调，让 QuestionScreen 可以离线验证，
+ * 不触发真实详情拉取、关注请求或评论加载。
  */
 data class QuestionScreenTestOverrides(
     val viewModel: QuestionFeedViewModel,
@@ -127,17 +133,13 @@ const val QUESTION_STATS_TAG = "question_stats"
 fun questionFeedItemTag(stableKey: String) = "question_feed_item_$stableKey"
 
 private suspend fun loadQuestion(
-    environment: PaginationEnvironment,
+    environment: ContentLoadEnvironment,
     question: Question,
 ): LoadedQuestionScreenData? {
     environment.addReadHistory(question.questionId.toString(), "question")
     val include = "read_count,visit_count,answer_count,voteup_count,comment_count,follower_count,detail,excerpt,author,relationship.is_following,topics"
-    val url = "https://www.zhihu.com/api/v4/questions/${question.questionId}?include=$include"
-    val jsonObject = environment
-        .httpClient()
-        .get(url) {
-            environment.configureSignedRequest(this)
-        }.body<JsonObject>()
+    val jsonObject = environment.fetchJson("https://www.zhihu.com/api/v4/questions/${question.questionId}", include)
+        ?: return null
     val questionData = decodeQuestionContentDetail(jsonObject)
     val loadedData = loadedQuestionScreenData(question, questionData)
     environment.postHistoryDestination(loadedData.historyDestination)
@@ -145,6 +147,12 @@ private suspend fun loadQuestion(
     return loadedData
 }
 
+/**
+ * 问题详情页。
+ *
+ * 顶部展示问题标题、描述、关注状态和统计信息，主体是该问题下回答的信息流列表。页面会记录内容打开来源和历史记录，
+ * 并复用文章/回答卡片、评论底部表单和分享入口；正文描述同样受 WebView/Markdown 渲染设置影响。
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun QuestionScreen(
@@ -154,6 +162,7 @@ fun QuestionScreen(
     val settings = rememberSettingsStore()
     val shareRuntime = rememberShareDialogRuntime()
     val openZhihuWebUrl = rememberZhihuWebUrlOpener()
+    val navigator = LocalNavigator.current
     val viewModel: QuestionFeedViewModel = testOverrides?.viewModel ?: viewModel(key = "question_${question.questionId}") {
         QuestionFeedViewModel(question.questionId)
     }
@@ -163,6 +172,8 @@ fun QuestionScreen(
     val onRefreshAnswers = testOverrides?.onRefreshAnswers ?: { viewModel.refresh(paginationEnvironment) }
     val onLoadMore = testOverrides?.onLoadMore ?: { viewModel.loadMore(paginationEnvironment) }
     val isEnd = testOverrides?.let { { it.isEnd } } ?: { viewModel.isEnd }
+    val sharedAnswerSwitchState = paginationEnvironment.articleAnswerSwitchState()
+    val answerNavigatorRepository = paginationEnvironment.answerNavigatorRepository()
     var questionContent by remember(question.questionId, initialUiState.questionContent) {
         mutableStateOf(initialUiState.questionContent)
     }
@@ -179,7 +190,7 @@ fun QuestionScreen(
         mutableIntStateOf(initialUiState.followerCount)
     }
     var title by remember(question.questionId, initialTitle) { mutableStateOf(initialTitle) }
-    var showComments by remember { mutableStateOf(false) }
+    var showComments by rememberSaveable(question.questionId) { mutableStateOf(false) }
     var isFollowing by remember(question.questionId, initialUiState.isFollowing) {
         mutableStateOf(initialUiState.isFollowing)
     }
@@ -188,7 +199,7 @@ fun QuestionScreen(
     var isQuestionDetailExpanded by rememberSaveable(question.questionId, initialUiState.isQuestionDetailExpanded) {
         mutableStateOf(initialUiState.isQuestionDetailExpanded)
     }
-    val questionContentPreview = remember(questionContent) { questionDetailPreview(questionContent) }
+    val questionContentPreview = remember(questionContent) { Ksoup.parse(questionContent).text().trim() }
     val shareText = getShareText(question, title)
 
     // 加载问题详情和答案
@@ -478,7 +489,31 @@ fun QuestionScreen(
                 FeedCard(
                     item = item,
                     modifier = Modifier.testTag(questionFeedItemTag(item.stableKey)),
-                )
+                ) {
+                    val dest = navDestination
+                    if (dest is Article && dest.type == ArticleType.Answer && sharedAnswerSwitchState != null && answerNavigatorRepository != null) {
+                        val currentNavigator = listOfNotNull(
+                            sharedAnswerSwitchState.pendingNavigator,
+                            sharedAnswerSwitchState.navigator,
+                        ).firstOrNull {
+                            it is QuestionAnswerNavigator && it.questionId == question.questionId && it.sortOrder == viewModel.sortOrder
+                        }
+                        sharedAnswerSwitchState.pendingNavigator = if (
+                            currentNavigator is QuestionAnswerNavigator &&
+                            currentNavigator.questionId == question.questionId &&
+                            currentNavigator.sortOrder == viewModel.sortOrder
+                        ) {
+                            currentNavigator
+                        } else {
+                            QuestionAnswerNavigator(
+                                questionId = question.questionId,
+                                sortOrder = viewModel.sortOrder,
+                                repository = answerNavigatorRepository,
+                            )
+                        }
+                    }
+                    dest?.let { navigator.onNavigate(it) }
+                }
             }
         }
     }
@@ -486,7 +521,7 @@ fun QuestionScreen(
         if (showComments) {
             content { showComments = false }
         }
-    } ?: QuestionCommentsSheet(
+    } ?: CommentScreenComponent(
         showComments = showComments,
         onDismiss = { showComments = false },
         content = question,

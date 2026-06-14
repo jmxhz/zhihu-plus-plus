@@ -75,26 +75,30 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.fleeksoft.ksoup.Ksoup
+import com.github.zly2006.zhihu.navigation.Daily
 import com.github.zly2006.zhihu.navigation.LocalNavigator
 import com.github.zly2006.zhihu.navigation.NavDestination
 import com.github.zly2006.zhihu.navigation.resolveContent
 import com.github.zly2006.zhihu.shared.data.DailySection
 import com.github.zly2006.zhihu.shared.data.DailyStory
+import com.github.zly2006.zhihu.shared.data.DailyStoryContentResponse
+import com.github.zly2006.zhihu.shared.data.fetchDailyStoryContent
 import com.github.zly2006.zhihu.shared.util.formatDailyDate
+import com.github.zly2006.zhihu.shared.util.twoDigitString
 import com.github.zly2006.zhihu.shared.viewmodel.DailyViewModel
 import io.ktor.client.HttpClient
-import io.ktor.client.call.body
-import io.ktor.client.request.get
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
+/**
+ * 知乎日报页面。
+ *
+ * 顶部提供日期切换和刷新，主体展示指定日期的日报内容并支持继续加载历史日期。日报条目可能跳转到站内内容或外部链接，
+ * 因此页面同时依赖 [LocalNavigator] 和系统 URI 打开能力；测试入口可以注入固定状态和日期选择回调。
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalTime::class)
 @Composable
 fun DailyScreen(
@@ -302,14 +306,14 @@ fun DailyScreen(
                         contentPadding = PaddingValues(vertical = 8.dp),
                     ) {
                         uiState.sections.forEach { section ->
-                            // Date header
+                            // 日期分组标题。
                             item(key = "header_${section.date}") {
                                 DateHeader(
                                     date = formatDailyDate(section.date),
                                     modifier = Modifier.testTag(dailySectionHeaderTag(section.date)),
                                 )
                             }
-                            // Stories for this date
+                            // 当前日期的日报条目。
                             items(section.stories, key = { "story_${it.id}" }) { story ->
                                 DailyStoryCard(
                                     story = story,
@@ -317,7 +321,9 @@ fun DailyScreen(
                                     onClick = {
                                         if (!isTestMode) {
                                             scope.launch {
-                                                val destination = fetchDailyStoryDestination(httpClient, story.id)
+                                                val destination = runCatching {
+                                                    fetchDailyStoryContentDestination(httpClient, story)
+                                                }.getOrNull()
                                                 if (destination != null) {
                                                     navigator.onNavigate(destination)
                                                 } else {
@@ -330,7 +336,7 @@ fun DailyScreen(
                             }
                         }
 
-                        // Loading indicator at the bottom
+                        // 底部加载指示器。
                         if (uiState.isLoadingMore) {
                             item(key = "loading_more") {
                                 Box(
@@ -486,21 +492,36 @@ private fun formatDailyDatePickerSelection(millis: Long): String {
         .toLocalDateTime(TimeZone.currentSystemDefault())
         .date
     return date.year.toString().padStart(4, '0') +
-        (date.month.ordinal + 1).toString().padStart(2, '0') +
-        date.day.toString().padStart(2, '0')
+        (date.month.ordinal + 1).twoDigitString() +
+        date.day.twoDigitString()
 }
 
-private suspend fun fetchDailyStoryDestination(
+private suspend fun fetchDailyStoryContentDestination(
     httpClient: HttpClient,
-    storyId: Long,
-): NavDestination? = withContext(Dispatchers.Default) {
-    val response: JsonObject = httpClient
-        .get("https://daily.zhihu.com/api/7/story/$storyId")
-        .body()
-    val body = response["body"]?.jsonPrimitive?.content ?: return@withContext null
-    val url = Ksoup.parse(body).selectFirst("a")?.attr("href")
-    url?.let(::resolveContent)
+    story: DailyStory,
+): NavDestination? {
+    val response = fetchDailyStoryContent(httpClient, story.id)
+    if (!response.isXiaCheStory()) {
+        response.originDestination()?.let { return it }
+    }
+    val bodyHtml = response.bodyHtml.ifBlank { return null }
+    return Daily.DailyStoryContent(
+        title = response.title.ifBlank { story.title },
+        bodyHtml = bodyHtml,
+        imageUrl = response.imageUrl,
+        shareUrl = response.shareUrl.ifBlank { story.url },
+    )
 }
+
+internal fun DailyStoryContentResponse.isXiaCheStory(): Boolean =
+    section?.name == "瞎扯" || title.startsWith("瞎扯")
+
+internal fun DailyStoryContentResponse.originDestination(): NavDestination? =
+    Ksoup
+        .parse(bodyHtml)
+        .selectFirst("a.originUrl")
+        ?.attr("href")
+        ?.let(::resolveContent)
 
 private fun dailySectionHeaderTag(date: String) = "daily_screen_section_$date"
 

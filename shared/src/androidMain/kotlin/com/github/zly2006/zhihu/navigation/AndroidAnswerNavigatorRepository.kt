@@ -20,6 +20,7 @@ package com.github.zly2006.zhihu.navigation
 import android.content.Context
 import com.github.zly2006.zhihu.data.AccountData
 import com.github.zly2006.zhihu.data.ContentDetailCache
+import com.github.zly2006.zhihu.data.HistoryStorage
 import com.github.zly2006.zhihu.data.getOrFetch
 import com.github.zly2006.zhihu.shared.data.DataHolder
 import com.github.zly2006.zhihu.shared.data.Feed
@@ -62,12 +63,24 @@ class AndroidAnswerNavigatorRepository(
         }
     }
 
-    override suspend fun getAlreadyOpenedAnswerIds(answerIds: List<Long>): Set<Long> =
-        ContentOpenEventSupport
-            .getAlreadyOpenedContentIds(
-                database = getContentFilterDatabase(appContext),
-                content = answerIds.map { ContentType.ANSWER to it.toString() },
-            ).mapNotNullTo(mutableSetOf()) { key ->
-                key.substringAfter(':', "").toLongOrNull()
-            }
+    override suspend fun getAlreadyOpenedAnswerIds(answerIds: List<Long>): Set<Long> {
+        if (answerIds.isEmpty()) return emptySet()
+        val database = getContentFilterDatabase(appContext)
+        val keys = answerIds.map { ContentOpenEventSupport.buildContentKey(ContentType.ANSWER, it.toString()) }
+        val localHistoryIds = HistoryStorage(appContext)
+            .history
+            .asSequence()
+            .filterIsInstance<Article>()
+            .filter { it.type == ArticleType.Answer }
+            .map { it.id }
+            .filterTo(mutableSetOf()) { it in answerIds }
+        val openedKeys = database
+            .contentOpenEventDao()
+            .getOpenedContentKeysByKeys(keys)
+        val cloudReadKeys = database
+            .cloudReadHistoryDao()
+            .getReadContentKeysByKeys(keys)
+        return (openedKeys + cloudReadKeys)
+            .mapNotNullTo(localHistoryIds) { key -> key.substringAfter(':', "").toLongOrNull() }
+    }
 }

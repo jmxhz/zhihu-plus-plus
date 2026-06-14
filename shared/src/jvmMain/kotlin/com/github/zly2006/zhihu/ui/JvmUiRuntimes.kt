@@ -20,7 +20,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,11 +34,10 @@ import androidx.compose.ui.unit.em
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.github.zly2006.zhihu.markdown.RenderMarkdown
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.TopLevelDestination
-import com.github.zly2006.zhihu.shared.data.DataHolder
 import com.github.zly2006.zhihu.shared.data.RecommendationMode
-import com.github.zly2006.zhihu.shared.data.fetchVerifiedZhihuSession
 import com.github.zly2006.zhihu.shared.desktop.DesktopAccountStore
 import com.github.zly2006.zhihu.shared.desktop.DesktopLoginRequests
 import com.github.zly2006.zhihu.shared.desktop.copyDesktopPlainText
@@ -300,7 +298,7 @@ actual fun rememberBlocklistSettingsPlatformRuntime(
     userMessages: UserMessageSink,
 ): BlocklistSettingsRuntime {
     val manager = remember {
-        val databaseFile = blocklistDatabaseFile()
+        val databaseFile = desktopContentFilterDatabaseFile()
         databaseFile.parentFile?.mkdirs()
         val database = getContentFilterDatabase(databaseFile)
         database.createBlocklistManager()
@@ -323,15 +321,13 @@ actual fun rememberBlocklistSettingsPlatformRuntime(
                 }
             },
             exportRules = {
-                val file = File(blocklistDatabaseFile().parentFile, "zhihupp_blocklist.json")
+                val file = File(desktopContentFilterDatabaseFile().parentFile, "zhihupp_blocklist.json")
                 file.writeText(manager.exportAllBlocklistToJsonText())
                 "已导出到 ${file.absolutePath}"
             },
         )
     }
 }
-
-private fun blocklistDatabaseFile(): File = desktopContentFilterDatabaseFile()
 
 private fun chooseBlocklistImportFile(): File? {
     val chooser = JFileChooser().apply {
@@ -354,11 +350,8 @@ actual fun rememberAccountSettingsPlatformRuntime(): AccountSettingsRuntime {
         accountState = accountState,
         refreshProfile = {
             val account = store.load()
-            val refreshed = store.createHttpClient(account.cookies).use { client ->
-                fetchVerifiedZhihuSession(client, account.cookies, account.userAgent)
-            }
+            val refreshed = store.refreshAndSaveProfile()
             if (refreshed != null) {
-                store.save(refreshed)
                 accountState.value = refreshed.toAccountSettingsAccountState()
             } else {
                 accountState.value = account.toAccountSettingsAccountState()
@@ -391,12 +384,7 @@ private fun com.github.zly2006.zhihu.shared.account.ZhihuAccountSession.toAccoun
     )
 
 @Composable
-actual fun rememberArticleScreenRuntime(): ArticleScreenRuntime = remember {
-    object : ArticleScreenRuntime {
-        override val articleHost: ArticleHost? = null
-        override val previewPreloader = ArticlePreviewPreloader { _, _, _, _ -> }
-    }
-}
+actual fun rememberArticleScreenRuntime(): ArticleScreenRuntime = remember { defaultArticleScreenRuntime() }
 
 @Composable
 actual fun ArticleWebViewContent(
@@ -410,9 +398,11 @@ actual fun ArticleWebViewContent(
     onImageLoadFailed: () -> Unit,
     onDoubleTap: () -> Unit,
 ) {
-    ArticleMarkdownContent(
+    RenderMarkdown(
         html = html,
         modifier = Modifier,
+        selectable = true,
+        enableScroll = false,
         header = {},
         footer = {},
     )
@@ -427,23 +417,18 @@ actual fun rememberPinScreenRuntime(): PinScreenRuntime {
     return remember(environment) {
         PinScreenRuntime(
             fetchLinkCardPreview = { linkCard ->
-                fetchDesktopLinkCardPreview(environment, linkCard)
+                fetchPinLinkCardPreview(linkCard) { destination ->
+                    environment.getContentDetail(destination)
+                }
             },
         )
     }
 }
 
 @Composable
-actual fun PinHtmlWebViewContent(html: String) = Unit // TODO: desktop Pin WebView
+actual fun PinHtmlWebViewContent(html: String) = Unit // TODO: 桌面端想法 WebView
 
 actual fun supportsPinHtmlWebView(): Boolean = false
-
-private suspend fun fetchDesktopLinkCardPreview(
-    environment: DesktopPaginationEnvironment,
-    linkCard: DataHolder.Pin.ContentLinkCard,
-): PinLinkCardPreview? = fetchPinLinkCardPreview(linkCard) { destination ->
-    environment.getContentDetail(destination)
-}
 
 @Composable
 actual fun rememberNotificationScreenRuntime(
@@ -468,20 +453,21 @@ actual fun rememberNotificationScreenRuntime(
 @Composable
 actual fun rememberZhihuHttpClient(): HttpClient {
     val store = remember { DesktopAccountStore() }
-    val session = remember { store.load() }
-    val client = remember(store, session) { store.createHttpClient(session.cookies) }
-    DisposableEffect(client) {
-        onDispose { client.close() }
-    }
-    return client
+    return store.httpClient()
 }
 
 @Composable
 actual fun QuestionDetailWebViewContent(
     questionId: Long,
     html: String,
-) = Unit // TODO: desktop question WebView
+) = Unit // TODO: 桌面端问题 WebView
 
 actual fun supportsQuestionDetailWebView(): Boolean = false
 
 actual fun Modifier.questionSelectionWorkaround(): Modifier = this
+
+@Composable
+actual fun ArticleImmersiveModeEffect(immersive: Boolean) = Unit
+
+@Composable
+actual fun LeaveImmersiveModeCleanup() = Unit

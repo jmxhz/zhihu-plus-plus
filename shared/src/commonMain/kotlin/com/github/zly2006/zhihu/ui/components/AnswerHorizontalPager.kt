@@ -43,11 +43,11 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import kotlin.math.tanh
 
 /**
  * 左右 overscroll 切换回答容器。
- * 主内容水平偏移，相邻回答的完整内容（标题、作者、WebView）从侧边露出。
+ *
+ * 主内容水平偏移，相邻回答的预览内容由调用方通过 [previousContent] / [nextContent] 提供，并从侧边露出。
  * 使用 tanh 阻尼、震动反馈、spring 回弹。
  */
 @Composable
@@ -71,11 +71,6 @@ fun AnswerHorizontalOverscroll(
     var hasTriggeredHaptic by remember { mutableStateOf(false) }
     var rawDragAccumulator by remember { mutableFloatStateOf(0f) }
     var containerWidthPx by remember { mutableFloatStateOf(0f) }
-
-    fun dampedOffset(rawDelta: Float): Float {
-        val sign = if (rawDelta >= 0) 1f else -1f
-        return sign * maxOverscrollPx * tanh(abs(rawDelta) / (maxOverscrollPx * HORIZONTAL_DAMPING_FACTOR))
-    }
 
     Box(
         modifier = Modifier
@@ -134,7 +129,11 @@ fun AnswerHorizontalOverscroll(
                         ) {
                             rawDragAccumulator = 0f
                         }
-                        val newOffset = dampedOffset(rawDragAccumulator)
+                        val newOffset = dampedOverscrollOffset(
+                            rawDelta = rawDragAccumulator,
+                            maxOverscrollPx = maxOverscrollPx,
+                            dampingFactor = HORIZONTAL_DAMPING_FACTOR,
+                        )
                         coroutineScope.launch { overscrollOffset.snapTo(newOffset) }
                         if (!hasTriggeredHaptic && abs(newOffset) >= triggerThresholdPx) {
                             hasTriggeredHaptic = true
@@ -147,7 +146,7 @@ fun AnswerHorizontalOverscroll(
                 }
             },
     ) {
-        // 左侧相邻回答（上一个），始终存活以避免 WebView 重建闪动
+        // 左侧相邻回答（上一个），始终存活以避免预览重建闪动。
         if (previousContent != null) {
             Box(
                 modifier = Modifier
@@ -163,7 +162,7 @@ fun AnswerHorizontalOverscroll(
             }
         }
 
-        // 右侧相邻回答（下一个），始终存活以避免 WebView 重建闪动
+        // 右侧相邻回答（下一个），始终存活以避免预览重建闪动。
         if (nextContent != null) {
             Box(
                 modifier = Modifier
@@ -179,7 +178,7 @@ fun AnswerHorizontalOverscroll(
             }
         }
 
-        // 主内容，跟随水平 overscroll 偏移
+        // 主内容，跟随水平 overscroll 偏移。
         Box(
             modifier = Modifier
                 .fillMaxSize()

@@ -52,4 +52,29 @@ class DailyStoryTest {
                 .single(),
         )
     }
+
+    @Test
+    fun decodesDailyStoryContentResponse() {
+        val response = ZhihuJson.json.decodeFromString<DailyStoryContentResponse>(
+            """
+            {
+              "id": 42,
+              "title": "daily title",
+              "body": "<p>body</p>",
+              "image": "https://example.com/cover.png",
+              "share_url": "https://daily.zhihu.com/story/42",
+              "section": {
+                "name": "瞎扯"
+              }
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(42L, response.id)
+        assertEquals("daily title", response.title)
+        assertEquals("<p>body</p>", response.bodyHtml)
+        assertEquals("https://example.com/cover.png", response.imageUrl)
+        assertEquals("https://daily.zhihu.com/story/42", response.shareUrl)
+        assertEquals("瞎扯", response.section?.name)
+    }
 }

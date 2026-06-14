@@ -28,10 +28,14 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.github.zly2006.zhihu.navigation.AnswerNavigatorPage
+import com.github.zly2006.zhihu.navigation.AnswerNavigatorRepository
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
 import com.github.zly2006.zhihu.navigation.Question
+import com.github.zly2006.zhihu.navigation.QuestionAnswerNavigator
 import com.github.zly2006.zhihu.shared.data.CommonFeed
+import com.github.zly2006.zhihu.shared.data.DataHolder
 import com.github.zly2006.zhihu.shared.data.Feed
 import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
 import com.github.zly2006.zhihu.shared.data.toFeedDisplayItemNavDestinationJson
@@ -57,6 +61,8 @@ import com.github.zly2006.zhihu.ui.QuestionScreen
 import com.github.zly2006.zhihu.ui.QuestionScreenTestOverrides
 import com.github.zly2006.zhihu.ui.QuestionScreenUiState
 import com.github.zly2006.zhihu.ui.questionFeedItemTag
+import com.github.zly2006.zhihu.viewmodel.CollectionItem
+import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.feed.QuestionFeedViewModel
 import com.github.zly2006.zhihu.viewmodel.filter.getBlocklistManager
 import com.github.zly2006.zhihu.viewmodel.paginationEnvironment
@@ -64,6 +70,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -197,6 +205,44 @@ class QuestionScreenInstrumentedTest {
     }
 
     @Test
+    fun questionAnswerClicksReuseNavigatorWithinSameQuestionAndReplaceAcrossQuestions() {
+        val staleNavigator = QuestionAnswerNavigator(
+            questionId = 987654321L,
+            repository = NO_OP_ANSWER_REPOSITORY,
+        )
+        composeRule.activity.runOnUiThread {
+            composeRule.activity.articleAnswerSwitchState.navigator = staleNavigator
+            composeRule.activity.articleAnswerSwitchState.pendingNavigator = null
+        }
+
+        setScreen(createQuestionOverrides())
+        composeRule.onNodeWithTag(questionFeedItemTag("offline-question-item-1")).performClick()
+        composeRule.waitForIdle()
+
+        val firstPending = composeRule.activity.articleAnswerSwitchState.pendingNavigator
+        assertTrue(firstPending is QuestionAnswerNavigator)
+        assertEquals(123456789L, (firstPending as QuestionAnswerNavigator).questionId)
+        assertNotSame(staleNavigator, firstPending)
+
+        composeRule.onNodeWithTag(questionFeedItemTag("offline-question-item-2")).performClick()
+        composeRule.waitForIdle()
+
+        assertSame(firstPending, composeRule.activity.articleAnswerSwitchState.pendingNavigator)
+
+        setScreenForQuestion(
+            overrides = createQuestionOverrides(questionId = 222222222L),
+            question = Question(questionId = 222222222L, title = "Another offline question"),
+        )
+        composeRule.onNodeWithTag(questionFeedItemTag("offline-question-item-1")).performClick()
+        composeRule.waitForIdle()
+
+        val otherQuestionPending = composeRule.activity.articleAnswerSwitchState.pendingNavigator
+        assertTrue(otherQuestionPending is QuestionAnswerNavigator)
+        assertEquals(222222222L, (otherQuestionPending as QuestionAnswerNavigator).questionId)
+        assertNotSame(firstPending, otherQuestionPending)
+    }
+
+    @Test
     fun blockedUserAnswersAreRemovedFromQuestionFeedProcessing() {
         /*
          * Expected behavior:
@@ -232,14 +278,62 @@ class QuestionScreenInstrumentedTest {
         assertEquals(listOf("这条回答应展示"), viewModel.displayItems.map { it.summary })
     }
 
-    private fun setScreen(overrides: QuestionScreenTestOverrides): RecordingNavigator = composeRule.setScreenContent {
+    @Test
+    fun questionFeedDeduplicatesAnswersAcrossPagesAndResetsOnRefresh() {
+        val viewModel = TestableQuestionFeedViewModel(123456789L)
+        val environment = viewModel.environmentForTest(composeRule.activity)
+
+        runBlocking {
+            viewModel.processForTest(
+                environment,
+                listOf(
+                    seedAnswerFeed(id = 1L, authorId = "author-1", authorName = "author 1", excerpt = "first"),
+                    seedAnswerFeed(id = 2L, authorId = "author-2", authorName = "author 2", excerpt = "second"),
+                ),
+            )
+            viewModel.processForTest(
+                environment,
+                listOf(
+                    seedAnswerFeed(id = 2L, authorId = "author-2", authorName = "author 2", excerpt = "second duplicate"),
+                    seedAnswerFeed(id = 3L, authorId = "author-3", authorName = "author 3", excerpt = "third"),
+                ),
+            )
+        }
+
+        assertEquals(listOf("first", "second", "third"), viewModel.displayItems.map { it.summary })
+
+        viewModel.refresh(environment)
+        runBlocking {
+            viewModel.processForTest(
+                environment,
+                listOf(seedAnswerFeed(id = 2L, authorId = "author-2", authorName = "author 2", excerpt = "second after refresh")),
+            )
+        }
+
+        assertEquals(listOf("second after refresh"), viewModel.displayItems.map { it.summary })
+    }
+
+    private fun setScreen(
+        overrides: QuestionScreenTestOverrides,
+    ): RecordingNavigator = composeRule.setScreenContent {
         QuestionScreen(
             question = Question(questionId = 123456789L, title = "离线问题标题"),
             testOverrides = overrides,
         )
     }
 
+    private fun setScreenForQuestion(
+        overrides: QuestionScreenTestOverrides,
+        question: Question,
+    ): RecordingNavigator = composeRule.setScreenContent {
+        QuestionScreen(
+            question = question,
+            testOverrides = overrides,
+        )
+    }
+
     private fun createQuestionOverrides(
+        questionId: Long = 123456789L,
         itemCount: Int = 8,
         isEnd: Boolean = true,
         onRefreshAnswers: (() -> Unit)? = null,
@@ -248,7 +342,7 @@ class QuestionScreenInstrumentedTest {
         onOpenLog: (() -> Unit)? = null,
         onShareAction: (() -> Unit)? = null,
     ): QuestionScreenTestOverrides {
-        val viewModel = QuestionFeedViewModel(123456789L)
+        val viewModel = QuestionFeedViewModel(questionId)
         viewModel.addDisplayItems(seededItems(itemCount))
         return QuestionScreenTestOverrides(
             viewModel = viewModel,
@@ -303,8 +397,17 @@ class QuestionScreenInstrumentedTest {
         questionId: Long,
     ) : QuestionFeedViewModel(questionId) {
         suspend fun processForTest(context: android.content.Context, data: List<Feed>) {
-            processResponse(paginationEnvironment(context), data, JsonArray(emptyList()))
+            processForTest(paginationEnvironment(context), data)
         }
+
+        suspend fun processForTest(environment: PaginationEnvironment, data: List<Feed>) {
+            processResponse(environment, data, JsonArray(emptyList()))
+        }
+
+        override fun loadMore(environment: PaginationEnvironment) = Unit
+
+        fun environmentForTest(context: android.content.Context): PaginationEnvironment =
+            paginationEnvironment(context)
     }
 
     private fun seedAnswerFeed(
@@ -337,4 +440,20 @@ class QuestionScreenInstrumentedTest {
             excerpt = excerpt,
         ),
     )
+
+    private companion object {
+        val NO_OP_ANSWER_REPOSITORY = object : AnswerNavigatorRepository {
+            override suspend fun fetchAnswerContent(article: Article): DataHolder.Answer? = null
+
+            override suspend fun fetchQuestionFeeds(
+                questionId: Long,
+                pageUrl: String?,
+            ): AnswerNavigatorPage<Feed> = AnswerNavigatorPage(emptyList(), "")
+
+            override suspend fun fetchCollectionItems(pageUrl: String): AnswerNavigatorPage<CollectionItem> =
+                AnswerNavigatorPage(emptyList(), "")
+
+            override suspend fun getAlreadyOpenedAnswerIds(answerIds: List<Long>): Set<Long> = emptySet()
+        }
+    }
 }

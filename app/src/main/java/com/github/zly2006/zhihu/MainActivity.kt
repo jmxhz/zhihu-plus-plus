@@ -36,7 +36,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
-import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -91,13 +90,12 @@ import com.github.zly2006.zhihu.util.ZhihuCredentialRefresher
 import com.github.zly2006.zhihu.util.clearShareImageCache
 import com.github.zly2006.zhihu.util.clipboardManager
 import com.github.zly2006.zhihu.util.enableEdgeToEdgeCompat
-import com.github.zly2006.zhihu.util.luoTianYiUrlLauncher
 import com.github.zly2006.zhihu.util.telemetry
 import com.github.zly2006.zhihu.viewmodel.AndroidArticlesSharedData
 import com.github.zly2006.zhihu.viewmodel.filter.AndroidContentFilterRuntime
-import com.github.zly2006.zhihu.viewmodel.filter.ContentFilterExtensions
 import com.github.zly2006.zhihu.viewmodel.filter.contentFilterSettings
 import com.github.zly2006.zhihu.viewmodel.filter.getContentFilterDatabase
+import com.github.zly2006.zhihu.viewmodel.filter.performContentFilterMaintenanceCleanup
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -234,10 +232,8 @@ class MainActivity :
         // 应用启动时执行内容过滤数据库清理
         lifecycleScope.launch {
             try {
-                ContentFilterExtensions.performMaintenanceCleanup(
-                    settings = contentFilterSettings(),
-                    database = getContentFilterDatabase(this@MainActivity),
-                )
+                getContentFilterDatabase(this@MainActivity)
+                    .performContentFilterMaintenanceCleanup(contentFilterSettings())
                 Log.i(TAG, "Content filter maintenance cleanup completed")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to perform content filter cleanup", e)
@@ -388,11 +384,9 @@ class MainActivity :
         super.onStop()
     }
 
-    fun currentContinuousUsageDurationMs(): Long = continuousUsageReminderManager.currentElapsedForegroundMs()
-
     override val developerRuntimeInfo: DeveloperRuntimeInfo
         get() = DeveloperRuntimeInfo(
-            continuousUsageDurationMs = currentContinuousUsageDurationMs(),
+            continuousUsageDurationMs = continuousUsageReminderManager.currentElapsedForegroundMs(),
             ttsState = ttsState,
             currentTtsEngineLabel = when (ttsEngine) {
                 TtsEngine.Pico -> "Pico TTS"
@@ -510,7 +504,12 @@ class MainActivity :
                     androidUserMessageSink(this@MainActivity).showShortMessage("获取视频链接失败")
                     return@launch
                 }
-                luoTianYiUrlLauncher(this@MainActivity, videoUrl.toUri())
+                startActivity(
+                    Intent(this@MainActivity, VideoPlayerActivity::class.java).apply {
+                        putExtra("video_url", videoUrl)
+                        putExtra("video_id", route.id)
+                    },
+                )
             }
             return
         }
@@ -549,7 +548,13 @@ class MainActivity :
             return
         }
         pendingContentOpenIdentity = identity
-        pendingContentOpenFrom = currentMainTabOpenFrom()
+        pendingContentOpenFrom = if (
+            runCatching { navController.currentBackStackEntry?.toRoute<MainTabs>() }.getOrNull() != null
+        ) {
+            currentMainTabOpenFrom
+        } else {
+            null
+        }
             ?: ContentOpenEventSupport.inferOpenFrom(currentContentOpenSource(), target)
     }
 
@@ -578,14 +583,6 @@ class MainActivity :
         }
     }
 
-    private fun currentMainTabOpenFrom(): String? = if (
-        runCatching { navController.currentBackStackEntry?.toRoute<MainTabs>() }.getOrNull() != null
-    ) {
-        currentMainTabOpenFrom
-    } else {
-        null
-    }
-
     private fun currentContentOpenSource(): NavDestination? {
         val currentEntry = navController.currentBackStackEntry
         return runCatching {
@@ -603,12 +600,8 @@ class MainActivity :
         }.getOrNull()
     }
 
-    fun postHistory(dest: NavDestination) {
-        history.add(dest)
-    }
-
     override fun postHistoryDestination(destination: NavDestination) {
-        postHistory(destination)
+        history.add(destination)
     }
 
     override fun speakArticleText(
@@ -745,8 +738,6 @@ class MainActivity :
         textToSpeech?.stop()
         ttsState = TtsState.Ready
     }
-
-    fun isSpeaking(): Boolean = textToSpeech?.isSpeaking ?: false
 
     @Suppress("unused")
     companion object {

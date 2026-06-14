@@ -23,13 +23,18 @@ import androidx.compose.runtime.setValue
 import com.github.zly2006.zhihu.navigation.zhihuQuestionFeedsUrl
 import com.github.zly2006.zhihu.shared.data.Feed
 import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
+import com.github.zly2006.zhihu.shared.data.GroupFeed
 import com.github.zly2006.zhihu.shared.data.target
+import com.github.zly2006.zhihu.viewmodel.ContentInteractionEnvironment
+import com.github.zly2006.zhihu.viewmodel.FeedDisplayEnvironment
 import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.filter.fetchBlockedUserIds
 
 open class QuestionFeedViewModel(
     private val questionId: Long,
 ) : BaseFeedViewModel() {
+    private val seenAnswerIds = mutableSetOf<Long>()
+
     var sortOrder by mutableStateOf("default")
         private set
 
@@ -39,10 +44,11 @@ open class QuestionFeedViewModel(
     fun updateSortOrder(order: String) {
         if (sortOrder != order) {
             sortOrder = order
+            seenAnswerIds.clear()
         }
     }
 
-    override fun createDisplayItem(environment: PaginationEnvironment, feed: Feed): FeedDisplayItem {
+    override fun createDisplayItem(environment: FeedDisplayEnvironment, feed: Feed): FeedDisplayItem {
         val target = feed.target
         if (target is Feed.AnswerTarget) {
             return FeedDisplayItem(
@@ -57,7 +63,7 @@ open class QuestionFeedViewModel(
         return super.createDisplayItem(environment, feed)
     }
 
-    suspend fun followQuestion(environment: PaginationEnvironment, questionId: Long, follow: Boolean) {
+    suspend fun followQuestion(environment: ContentInteractionEnvironment, questionId: Long, follow: Boolean) {
         try {
             environment.followQuestion(questionId, follow)
         } catch (e: Exception) {
@@ -66,8 +72,44 @@ open class QuestionFeedViewModel(
     }
 
     override fun processResponse(environment: PaginationEnvironment, data: List<Feed>, rawData: kotlinx.serialization.json.JsonArray) {
-        val filtered = filterBlockedAnswers(environment, data)
+        val filtered = filterBlockedAnswers(environment, filterDuplicateAnswers(data))
         super.processResponse(environment, filtered, rawData)
+    }
+
+    override fun refresh(environment: PaginationEnvironment) {
+        seenAnswerIds.clear()
+        super.refresh(environment)
+    }
+
+    override suspend fun pullToRefresh(environment: PaginationEnvironment) {
+        seenAnswerIds.clear()
+        super.pullToRefresh(environment)
+    }
+
+    private fun filterDuplicateAnswers(data: List<Feed>): List<Feed> = data.mapNotNull { feed ->
+        when (feed) {
+            is GroupFeed -> {
+                val filteredList = feed.list.filter(::keepAnswerOnce)
+                if (filteredList.isEmpty()) {
+                    null
+                } else {
+                    GroupFeed(
+                        id = feed.id,
+                        attachedInfo = feed.attachedInfo,
+                        brief = feed.brief,
+                        groupText = feed.groupText,
+                        list = filteredList,
+                        styleType = feed.styleType,
+                    )
+                }
+            }
+            else -> if (keepAnswerOnce(feed)) feed else null
+        }
+    }
+
+    private fun keepAnswerOnce(feed: Feed): Boolean {
+        val target = feed.target
+        return target !is Feed.AnswerTarget || seenAnswerIds.add(target.id)
     }
 
     private fun filterBlockedAnswers(environment: PaginationEnvironment, data: List<Feed>): List<Feed> {

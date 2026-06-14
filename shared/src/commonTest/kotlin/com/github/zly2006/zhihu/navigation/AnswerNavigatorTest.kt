@@ -26,6 +26,7 @@ import com.github.zly2006.zhihu.viewmodel.CollectionItem
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class AnswerNavigatorTest {
     @Test
@@ -60,6 +61,85 @@ class AnswerNavigatorTest {
     }
 
     @Test
+    fun questionNavigatorUsesSelectedSortOrderForInitialQuestionFeedsPage() = runTest {
+        var requestedPageUrl = ""
+        val navigator = QuestionAnswerNavigator(
+            questionId = 10,
+            sortOrder = "updated",
+            repository = object : AnswerNavigatorRepository {
+                override suspend fun fetchAnswerContent(article: Article): DataHolder.Answer? = null
+
+                override suspend fun fetchQuestionFeeds(
+                    questionId: Long,
+                    pageUrl: String?,
+                ): AnswerNavigatorPage<Feed> {
+                    requestedPageUrl = pageUrl.orEmpty()
+                    return AnswerNavigatorPage(
+                        items = listOf(answerFeed(answerId = 2, questionId = questionId)),
+                        nextUrl = "",
+                    )
+                }
+
+                override suspend fun fetchCollectionItems(pageUrl: String): AnswerNavigatorPage<CollectionItem> =
+                    AnswerNavigatorPage(emptyList(), "")
+
+                override suspend fun getAlreadyOpenedAnswerIds(answerIds: List<Long>): Set<Long> = emptySet()
+            },
+        )
+
+        navigator.pushAnswer(cachedAnswer(answerId = 1))
+        assertEquals(2L, navigator.loadNext()?.id)
+
+        assertTrue(requestedPageUrl.contains("order=updated"))
+    }
+
+    @Test
+    fun questionNavigatorSkipsHistoryReadAnswersOnlyForNextAndKeepsSessionPreviousChain() = runTest {
+        val navigator = QuestionAnswerNavigator(
+            questionId = 10,
+            repository = repositoryWithQuestionAnswers(
+                answers = listOf(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L),
+                openedAnswerIds = setOf(7L),
+            ),
+        )
+
+        navigator.pushAnswer(cachedAnswer(answerId = 7))
+
+        val firstNext = navigator.loadNext()
+        assertEquals(1L, firstNext?.id)
+        navigator.pushAnswer(cachedAnswer(answerId = firstNext!!.id))
+
+        val secondNext = navigator.loadNext()
+        assertEquals(2L, secondNext?.id)
+        navigator.pushAnswer(cachedAnswer(answerId = secondNext!!.id))
+
+        assertEquals(1L, navigator.goToPrevious()?.article?.id)
+        assertEquals(7L, navigator.goToPrevious()?.article?.id)
+    }
+
+    @Test
+    fun questionNavigatorSkipsPreviouslyReadAnswersWhenEnteringAnotherAnswer() = runTest {
+        val navigator = QuestionAnswerNavigator(
+            questionId = 10,
+            repository = repositoryWithQuestionAnswers(
+                answers = listOf(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L),
+                openedAnswerIds = setOf(1L, 2L, 7L),
+            ),
+        )
+
+        navigator.pushAnswer(cachedAnswer(answerId = 5))
+
+        listOf(3L, 4L, 6L, 8L).forEach { expectedId ->
+            val next = navigator.loadNext()
+            assertEquals(expectedId, next?.id)
+            navigator.pushAnswer(cachedAnswer(answerId = next!!.id))
+        }
+
+        assertEquals(6L, navigator.goToPrevious()?.article?.id)
+        assertEquals(4L, navigator.goToPrevious()?.article?.id)
+    }
+
+    @Test
     fun paginationNavigatorSkipsQueuedAnswersVisitedInCurrentSession() = runTest {
         val navigator = PaginationInfoNavigator(
             questionId = 10,
@@ -75,6 +155,23 @@ class AnswerNavigatorTest {
         assertEquals(2L, navigator.loadNext()?.id)
     }
 
+    @Test
+    fun paginationNavigatorDeduplicatesInitialQueues() = runTest {
+        val navigator = PaginationInfoNavigator(
+            questionId = 10,
+            initialPaginationInfo = DataHolder.Answer.PaginationInfo(
+                index = 0,
+                nextAnswerIds = listOf(1, 2, 2, 3),
+            ),
+            repository = emptyRepository,
+        )
+
+        navigator.pushAnswer(cachedAnswer(answerId = 1))
+        assertEquals(2L, navigator.loadNext()?.id)
+        navigator.pushAnswer(cachedAnswer(answerId = 2))
+        assertEquals(3L, navigator.loadNext()?.id)
+    }
+
     private val emptyRepository = object : AnswerNavigatorRepository {
         override suspend fun fetchAnswerContent(article: Article): DataHolder.Answer? = null
 
@@ -87,6 +184,27 @@ class AnswerNavigatorTest {
             AnswerNavigatorPage(emptyList(), "")
 
         override suspend fun getAlreadyOpenedAnswerIds(answerIds: List<Long>): Set<Long> = emptySet()
+    }
+
+    private fun repositoryWithQuestionAnswers(
+        answers: List<Long>,
+        openedAnswerIds: Set<Long>,
+    ) = object : AnswerNavigatorRepository {
+        override suspend fun fetchAnswerContent(article: Article): DataHolder.Answer? = null
+
+        override suspend fun fetchQuestionFeeds(
+            questionId: Long,
+            pageUrl: String?,
+        ): AnswerNavigatorPage<Feed> = AnswerNavigatorPage(
+            items = answers.map { answerId -> answerFeed(answerId = answerId, questionId = questionId) },
+            nextUrl = "",
+        )
+
+        override suspend fun fetchCollectionItems(pageUrl: String): AnswerNavigatorPage<CollectionItem> =
+            AnswerNavigatorPage(emptyList(), "")
+
+        override suspend fun getAlreadyOpenedAnswerIds(answerIds: List<Long>): Set<Long> =
+            answerIds.filterTo(mutableSetOf()) { it in openedAnswerIds }
     }
 
     private fun answerFeed(
