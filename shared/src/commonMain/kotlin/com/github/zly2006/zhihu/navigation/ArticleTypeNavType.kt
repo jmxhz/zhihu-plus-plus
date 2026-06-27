@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -38,7 +38,7 @@ object ArticleTypeNavType : NavType<ArticleType>(false) {
         if (!contains(key) || isNull(key)) {
             null
         } else {
-            getString(key)?.let { name -> ArticleType.entries.find { it.name == name } }
+            getString(key).let { name -> ArticleType.entries.find { it.name == name } }
         }
     }
 

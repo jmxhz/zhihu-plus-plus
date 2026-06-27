@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -66,6 +66,45 @@ object DataHolder {
 
     @Serializable
     object DummyContent : Content
+
+    @Serializable
+    data class QuestionRelationshipApiResponse(
+        val relationship: QuestionRelationshipApi? = null,
+    )
+
+    @Serializable
+    data class QuestionRelationshipApi(
+        val myAnswer: MyAnswer? = null,
+    )
+
+    @Serializable
+    data class MyAnswer(
+        val isDeleted: Boolean? = null,
+        val answerId: String? = null,
+    )
+
+    @Serializable
+    data class ContentPublishResponse(
+        val message: String? = null,
+        val code: Int? = null,
+        val data: ContentPublishResponseData? = null,
+    )
+
+    @Serializable
+    data class ContentPublishResponseData(
+        val result: String? = null,
+    )
+
+    @Serializable
+    data class PublishResult(
+        val id: String? = null,
+        val publish: PublishResultPublish? = null,
+    )
+
+    @Serializable
+    data class PublishResultPublish(
+        val id: String? = null,
+    )
 
     @Serializable
     data class Author(
@@ -263,9 +302,18 @@ object DataHolder {
         val paidInfo: JsonObject? = null,
         val paginationInfo: PaginationInfo? = null,
         val segmentInfos: List<SegmentInfoParagraph> = emptyList(),
+        val endorsements: List<AnswerEndorsement>? = null,
         @Serializable(with = BooleanCompatSerializer::class)
         val allowSegmentInteraction: Boolean = false,
     ) : Content {
+        val endorsementTexts: List<String>
+            get() = endorsementItems.map { item -> item.text }
+
+        val endorsementItems: List<AnswerEndorsementDisplay>
+            get() = endorsements
+                .orEmpty()
+                .mapNotNull { endorsement -> endorsement.display }
+
         @Serializable
         data class PaginationInfo(
             val index: Int,
@@ -273,6 +321,63 @@ object DataHolder {
             val nextAnswerIds: List<Long> = emptyList(),
         )
     }
+
+    @Serializable
+    data class AnswerEndorsement(
+        val actionUrl: String? = null,
+        val backgroundColor: AnswerEndorsementColor? = null,
+        val elements: List<AnswerEndorsementElement>? = null,
+    ) {
+        val display: AnswerEndorsementDisplay?
+            get() {
+                val elements = elements.orEmpty()
+                val textElements = elements.filter { element ->
+                    element.type == "TEXT" && !element.content.isNullOrBlank()
+                }
+                val text = textElements
+                    .joinToString(" ") { element -> element.content.orEmpty() }
+                    .takeIf { value -> value.isNotBlank() } ?: return null
+                val leadingImage = elements.firstOrNull { element ->
+                    element.type == "IMAGE" && !element.imageKey.isNullOrBlank() && !element.imageKey.contains("arrow")
+                }
+                val trailingImage = elements.lastOrNull { element ->
+                    element.type == "IMAGE" && element.imageKey?.contains("arrow") == true
+                }
+                return AnswerEndorsementDisplay(
+                    text = text,
+                    backgroundColor = backgroundColor,
+                    textColor = textElements.firstNotNullOfOrNull { element -> element.fontColor },
+                    leadingIconKey = leadingImage?.imageKey,
+                    leadingIconColor = leadingImage?.imageColor,
+                    trailingIconKey = trailingImage?.imageKey,
+                )
+            }
+    }
+
+    data class AnswerEndorsementDisplay(
+        val text: String,
+        val backgroundColor: AnswerEndorsementColor? = null,
+        val textColor: AnswerEndorsementColor? = null,
+        val leadingIconKey: String? = null,
+        val leadingIconColor: AnswerEndorsementColor? = null,
+        val trailingIconKey: String? = null,
+    )
+
+    @Serializable
+    data class AnswerEndorsementColor(
+        val alpha: Float = 1f,
+        val group: String? = null,
+    )
+
+    @Serializable
+    data class AnswerEndorsementElement(
+        val type: String? = null,
+        val content: String? = null,
+        val fontColor: AnswerEndorsementColor? = null,
+        val imageKey: String? = null,
+        val imageColor: AnswerEndorsementColor? = null,
+        val selectedImageKey: String? = null,
+    )
 
     @Serializable
     data class Article(
@@ -697,6 +802,7 @@ object DataHolder {
         val virtuals: JsonObject? = null,
         val reactionRelation: JsonObject? = null,
         val topReactions: JsonObject? = null,
+        val bottomPoll: BottomPoll? = null,
     ) : Content {
         @Serializable
         sealed interface ContentItem
@@ -725,6 +831,42 @@ object DataHolder {
             val isGif: Boolean = false,
             val originalUrl: String? = null,
         ) : ContentItem
+
+        @Serializable
+        @SerialName("poll")
+        data class ContentPoll(
+            val duration: Int = 0,
+            val pollId: Long,
+        ) : ContentItem
+
+        @Serializable
+        data class BottomPoll(
+            val voting: Poll? = null,
+            val pk: Poll? = null,
+        )
+
+        @Serializable
+        data class Poll(
+            val id: String,
+            val title: String = "",
+            val maxSelections: Int = 1,
+            val type: String = "",
+            val beginAt: Long = 0L,
+            val endAt: Long = -1L,
+            val votingCount: Int = 0,
+            val memberCount: Int = 0,
+            val isVoted: Boolean = false,
+            val isReviewing: Boolean = false,
+            val options: List<PollOption> = emptyList(),
+        )
+
+        @Serializable
+        data class PollOption(
+            val id: String,
+            val title: String = "",
+            val votingCount: Int = 0,
+            val isSelected: Boolean = false,
+        )
     }
 
     @Serializable

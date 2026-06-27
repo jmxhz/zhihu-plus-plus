@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -43,7 +43,7 @@ private class DesktopNotificationSettingsStore : NotificationSettingsStore {
         setBoolean("$KEY_DISPLAY_IN_APP${type.name}", enabled)
 
     override fun getAutoMarkAsReadEnabled(): Boolean =
-        properties.getProperty(KEY_AUTO_MARK_AS_READ)?.toBooleanStrictOrNull() ?: true
+        properties.getProperty(KEY_AUTO_MARK_AS_READ)?.toBooleanStrictOrNull() ?: false
 
     override fun setAutoMarkAsReadEnabled(enabled: Boolean) = setBoolean(KEY_AUTO_MARK_AS_READ, enabled)
 

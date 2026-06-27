@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -43,7 +43,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,18 +65,21 @@ import com.github.zly2006.zhihu.navigation.Video
 import com.github.zly2006.zhihu.navigation.resolveContent
 import com.github.zly2006.zhihu.shared.platform.rememberExternalUrlOpener
 import com.github.zly2006.zhihu.shared.platform.rememberImageGalleryOpener
+import com.github.zly2006.zhihu.shared.platform.rememberImageSaver
+import com.github.zly2006.zhihu.shared.platform.rememberImageSharer
 import com.github.zly2006.zhihu.shared.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.ui.components.CommentScreenComponent
 import com.github.zly2006.zhihu.ui.components.LocalSegmentActionSheetHost
 import com.github.zly2006.zhihu.ui.components.LocalSegmentCommentHost
 import com.github.zly2006.zhihu.ui.components.SegmentActionSheet
 import com.github.zly2006.zhihu.ui.components.SegmentActionSheetState
+import com.github.zly2006.zhihu.ui.subscreens.PREF_BLOCK_SPACING
 import com.github.zly2006.zhihu.ui.subscreens.PREF_FONT_SIZE
 import com.github.zly2006.zhihu.ui.subscreens.PREF_LINE_HEIGHT
+import com.hrm.markdown.parser.ast.Document
 import com.hrm.markdown.renderer.Markdown
 import com.hrm.markdown.renderer.MarkdownImageData
 import com.hrm.markdown.renderer.MarkdownTheme
-import kotlinx.coroutines.launch
 
 @Composable
 fun RenderImage(
@@ -85,13 +87,13 @@ fun RenderImage(
     modifier: Modifier,
     imageUrls: List<String> = listOf(data.url),
 ) {
-    val runtime = rememberMarkdownRuntime()
     val openImageGallery = rememberImageGalleryOpener()
     val openExternalUrl = rememberExternalUrlOpener()
+    val saveImage = rememberImageSaver()
+    val shareImage = rememberImageSharer()
     var expanded by remember { mutableStateOf(false) }
     var pressOffset by remember { mutableStateOf(DpOffset.Zero) }
     val density = LocalDensity.current
-    val coroutineScope = rememberCoroutineScope()
     val hapticFeedback = LocalHapticFeedback.current
     val previewUrls = remember(imageUrls, data.url) {
         imageUrls.ifEmpty { listOf(data.url) }
@@ -107,7 +109,7 @@ fun RenderImage(
         contentAlignment = Alignment.Center,
     ) {
         AsyncImage(
-            model = data.url,
+            model = rememberMarkdownImageModel(data.url),
             contentDescription = data.altText,
             modifier = modifier
                 .fillMaxWidth(0.8f)
@@ -154,18 +156,14 @@ fun RenderImage(
                     text = { Text("保存图片") },
                     onClick = {
                         expanded = false
-                        coroutineScope.launch {
-                            runtime.saveMarkdownImage(data.url)
-                        }
+                        saveImage(data.url)
                     },
                 )
                 DropdownMenuItem(
                     text = { Text("分享图片") },
                     onClick = {
                         expanded = false
-                        coroutineScope.launch {
-                            runtime.shareMarkdownImage(data.url)
-                        }
+                        shareImage(data.url)
                     },
                 )
             }
@@ -194,7 +192,7 @@ fun RenderVideoBox(
     ) {
         if (thumbnailUrl != null) {
             AsyncImage(
-                model = thumbnailUrl,
+                model = rememberMarkdownImageModel(thumbnailUrl),
                 contentDescription = "视频封面",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
@@ -248,14 +246,51 @@ fun RenderMarkdown(
     enableScroll: Boolean = true,
     header: (@Composable () -> Unit)? = null,
     footer: (@Composable () -> Unit)? = null,
-    internalLinkCardContent: (@Composable (String) -> Unit)? = null,
 ) {
-    val document = remember(html, internalLinkCardContent) {
-        htmlToMdAst(
-            html = html,
-            internalLinkCardContent = internalLinkCardContent,
-        )
-    }
+    val document = remember(html) { htmlToMdAst(html) }
+    RenderMarkdownDocument(
+        document = document,
+        modifier = modifier,
+        scrollState = scrollState,
+        selectable = selectable,
+        enableScroll = enableScroll,
+        header = header,
+        footer = footer,
+    )
+}
+
+@Composable
+fun RenderMarkdownText(
+    markdown: String,
+    modifier: Modifier = Modifier,
+    scrollState: ScrollState = rememberScrollState(),
+    selectable: Boolean = true,
+    enableScroll: Boolean = true,
+    header: (@Composable () -> Unit)? = null,
+    footer: (@Composable () -> Unit)? = null,
+) {
+    val document = remember(markdown) { markdownToMdAst(markdown) }
+    RenderMarkdownDocument(
+        document = document,
+        modifier = modifier,
+        scrollState = scrollState,
+        selectable = selectable,
+        enableScroll = enableScroll,
+        header = header,
+        footer = footer,
+    )
+}
+
+@Composable
+private fun RenderMarkdownDocument(
+    document: Document,
+    modifier: Modifier,
+    scrollState: ScrollState,
+    selectable: Boolean,
+    enableScroll: Boolean,
+    header: (@Composable () -> Unit)?,
+    footer: (@Composable () -> Unit)?,
+) {
     val imageUrls = remember(document) { document.previewImageUrls() }
     val navigator = LocalNavigator.current
     val runtime = rememberMarkdownRuntime()
@@ -263,6 +298,7 @@ fun RenderMarkdown(
     val settings = rememberSettingsStore()
     val fontSize = settings.getInt(PREF_FONT_SIZE, 100)
     val lineHeight = settings.getInt(PREF_LINE_HEIGHT, 160)
+    val blockSpacing = settings.getInt(PREF_BLOCK_SPACING, 100)
     val defaultTheme = MarkdownTheme.material3()
 
     val theme = defaultTheme.copy(
@@ -270,6 +306,7 @@ fun RenderMarkdown(
             fontSize = 16.sp * fontSize / 100,
             lineHeight = 16.sp * fontSize / 100 * lineHeight / 100,
         ),
+        blockSpacing = defaultTheme.blockSpacing * (blockSpacing / 100f),
         mathFontSize = 18f * fontSize / 100,
         mathFont = runtime.mathFont ?: defaultTheme.mathFont,
     )

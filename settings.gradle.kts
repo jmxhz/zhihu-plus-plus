@@ -21,7 +21,12 @@ buildCache {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        mavenLocal()
+        mavenLocal {
+            content {
+                includeGroupAndSubgroups("io.github.zly2006")
+                includeGroupAndSubgroups("io.github.huarangmeng")
+            }
+        }
         google {
             mavenContent {
                 includeGroupAndSubgroups("androidx")
@@ -45,3 +50,4 @@ include(":app")
 include(":desktopApp")
 include(":sentence_embeddings")
 include(":shared")
+include(":shared-local-db")

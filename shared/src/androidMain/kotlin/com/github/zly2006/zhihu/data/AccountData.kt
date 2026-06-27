@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -31,24 +31,17 @@ import com.github.zly2006.zhihu.shared.account.ZhihuAccountRepository
 import com.github.zly2006.zhihu.shared.account.ZhihuAccountSession
 import com.github.zly2006.zhihu.shared.account.ZhihuAccountSessionStore
 import com.github.zly2006.zhihu.shared.data.Person
-import com.github.zly2006.zhihu.shared.data.ZhihuCookieStorage
 import com.github.zly2006.zhihu.shared.data.ZhihuJson
-import com.github.zly2006.zhihu.shared.data.fetchZhihuAuthenticatedJson
 import com.github.zly2006.zhihu.shared.data.installZhihuCommonClientConfig
-import com.github.zly2006.zhihu.util.signFetchRequest
 import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.HttpClientEngineConfig
-import io.ktor.client.request.HttpRequestBuilder
-import io.ktor.http.HttpMethod
-import io.ktor.http.Url
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import java.io.File
@@ -91,13 +84,6 @@ object AccountData {
         dataState.value = data
         accountClient(context).save(data.toSession())
     }
-
-    fun cookieStorage(context: Context, cookies: MutableMap<String, String>? = null) =
-        ZhihuCookieStorage(cookies ?: data.cookies) {
-            if (cookies == null) {
-                saveData(context, data)
-            }
-        }
 
     private var accountClient: ZhihuAccountClient? = null
     private var observedLifecycleClient: HttpClient? = null
@@ -176,7 +162,9 @@ object AccountData {
         accountClient?.let { return it }
         val appContext = context.applicationContext
         return ZhihuAccountClient(
-            repository = accountRepository(appContext),
+            repository = ZhihuAccountRepository(
+                AndroidAccountSessionStore(File(appContext.filesDir, "account.json")),
+            ),
             createClient = { cookies, _, onCookieChanged, isTemporary ->
                 httpClientFactoryOverride?.invoke(appContext, if (isTemporary) cookies else null)
                     ?: createConfiguredHttpClient(
@@ -192,10 +180,6 @@ object AccountData {
             accountClient = it
         }
     }
-
-    private fun accountRepository(context: Context) = ZhihuAccountRepository(
-        AndroidAccountSessionStore(File(context.filesDir, "account.json")),
-    )
 
     private fun Data.toSession(): ZhihuAccountSession = ZhihuAccountSession(
         login = login,
@@ -270,65 +254,6 @@ object AccountData {
             return this.json.decodeFromJsonElement(serializer, convertedJson)
         } catch (e: SerializationException) {
             throw ZhPlusJsonSerializationException(convertedJson, "Failed to parse JSON: ${e.message}", e)
-        }
-    }
-
-    @Suppress("FunctionName")
-    fun snake_case2camelCase(snakeCase: String): String = ZhihuJson.snakeCaseToCamelCase(snakeCase)
-
-    @Suppress("FunctionName")
-    fun snake_case2camelCase(json: JsonElement): JsonElement = ZhihuJson.snakeCaseToCamelCase(json)
-
-    private var lastRefreshCookie = 0L
-
-    fun isZhihuWebApiUrl(url: Url): Boolean = url.host == "www.zhihu.com" &&
-        (
-            url.encodedPath.startsWith("/api/") ||
-                url.encodedPath == "/lastread/touch" ||
-                url.encodedPath.startsWith("/lastread/")
-        )
-
-    private fun HttpRequestBuilder.signZhihuWebApiRequestIfNeeded() {
-        if (isZhihuWebApiUrl(url.build())) {
-            signFetchRequest()
-        }
-    }
-
-    suspend fun fetch(context: Context, url: String, block: suspend HttpRequestBuilder.() -> Unit = {}): JsonObject? {
-        val client = httpClient(context)
-        return fetchZhihuAuthenticatedJson(
-            client = client,
-            url = url,
-            lastRefreshMillis = lastRefreshCookie,
-            updateLastRefreshMillis = { lastRefreshCookie = it },
-            block = {
-                block()
-                signZhihuWebApiRequestIfNeeded()
-            },
-        )
-    }
-
-    suspend fun fetchGet(context: Context, url: String, block: suspend HttpRequestBuilder.() -> Unit = {}) = fetch(context, url) {
-        block()
-        method = HttpMethod.Get
-    }
-
-    suspend fun fetchPost(context: Context, url: String, block: suspend HttpRequestBuilder.() -> Unit = {}) = fetch(context, url) {
-        block()
-        method = HttpMethod.Post
-    }
-
-    /**
-     * 添加在线阅读历史记录
-     * @param contentType 内容类型 (如 "article", "answer", "profile" 等)
-     */
-    suspend fun addReadHistory(
-        context: Context,
-        contentToken: String,
-        contentType: String,
-    ) {
-        runCatching {
-            accountClient(context).addReadHistory(contentToken, contentType)
         }
     }
 }

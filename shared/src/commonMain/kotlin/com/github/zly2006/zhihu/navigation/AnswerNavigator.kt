@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.github.zly2006.zhihu.shared.data.DataHolder
 import com.github.zly2006.zhihu.shared.data.Feed
+import com.github.zly2006.zhihu.shared.data.ZhihuJson
 import com.github.zly2006.zhihu.shared.data.navDestination
 import com.github.zly2006.zhihu.shared.data.officialBadge
 import com.github.zly2006.zhihu.shared.data.target
@@ -31,23 +32,15 @@ import com.github.zly2006.zhihu.shared.filter.ContentOpenEventSupport
 import com.github.zly2006.zhihu.shared.util.Log
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel.CachedAnswerContent
 import com.github.zly2006.zhihu.viewmodel.CollectionItem
+import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
+import com.github.zly2006.zhihu.viewmodel.filter.ContentType
+import com.github.zly2006.zhihu.viewmodel.filter.getContentFilterDatabase
+import com.github.zly2006.zhihu.viewmodel.getOrFetchContentDetail
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-
-interface AnswerNavigatorRepository {
-    suspend fun fetchAnswerContent(article: Article): DataHolder.Answer?
-
-    suspend fun fetchQuestionFeeds(
-        questionId: Long,
-        pageUrl: String?,
-    ): AnswerNavigatorPage<Feed>
-
-    suspend fun fetchCollectionItems(pageUrl: String): AnswerNavigatorPage<CollectionItem>
-
-    suspend fun getAlreadyOpenedAnswerIds(answerIds: List<Long>): Set<Long>
-}
 
 data class AnswerNavigatorPage<T>(
     val items: List<T>,
@@ -98,16 +91,12 @@ fun zhihuQuestionFeedsUrl(
  */
 abstract class AnswerNavigator(
     val sourceName: String,
-    protected val repository: AnswerNavigatorRepository,
+    protected val environment: ZhihuApiEnvironment,
 ) {
     // ── 历史记录 ──────────────────────────────────────────────────────────────
 
     val answerHistory = mutableStateListOf<CachedAnswerContent>()
     var currentAnswerIndex by mutableIntStateOf(-1)
-    val visitedAnswerIds: Set<Long>
-        get() = mutableVisitedAnswerIds
-
-    protected val mutableVisitedAnswerIds = mutableSetOf<Long>()
 
     /**
      * 来源提供的上一个回答预览（history 为空时的 fallback）。
@@ -133,7 +122,6 @@ abstract class AnswerNavigator(
     /** 将当前回答推入历史，截断前向分支。 */
     fun pushAnswer(cached: CachedAnswerContent) {
         val articleId = cached.article.id
-        mutableVisitedAnswerIds.add(articleId)
         // 历史内导航后再次 loadArticle：只更新内容，不改变索引
         if (currentAnswerIndex in answerHistory.indices &&
             answerHistory[currentAnswerIndex].article == cached.article
@@ -207,30 +195,50 @@ abstract class AnswerNavigator(
      * insert at [0] 后 currentAnswerIndex 保持 0，恰好指向新插入条目。
      */
     protected fun insertPrevious(cached: CachedAnswerContent): CachedAnswerContent {
-        mutableVisitedAnswerIds.add(cached.article.id)
         answerHistory.add(0, cached)
         return cached
     }
-
-    protected fun isVisitedInCurrentSession(answerId: Long): Boolean = answerId in mutableVisitedAnswerIds
 }
 
 /**
- * 从知乎问题的回答列表中导航。
+ * 从问题详情页当前回答序列中导航。
  *
- * 由于默认从最高赞开始，而非上次阅读开始，不建议使用，做fallback。
+ * 优先使用进入详情时已加载的前后回答队列；本地队列耗尽后，再按当前排序继续请求问题 feeds。
  */
 class QuestionAnswerNavigator(
     val questionId: Long,
-    val sortOrder: String = "default",
-    repository: AnswerNavigatorRepository,
-) : AnswerNavigator("此问题", repository) {
+    initialNextAnswers: List<Article> = emptyList(),
+    initialPreviousAnswers: List<Article> = emptyList(),
+    initialNextUrl: String = "",
+    private val order: String? = null,
+    private val getAlreadyOpenedAnswerIds: suspend (List<Long>) -> Set<Long> = { answerIds ->
+        ContentOpenEventSupport
+            .getAlreadyOpenedContentIds(
+                database = getContentFilterDatabase(),
+                content = answerIds.map { ContentType.ANSWER to it.toString() },
+            ).mapNotNull { key ->
+                key.substringAfter(':', "").toLongOrNull()
+            }.toSet()
+    },
+    environment: ZhihuApiEnvironment,
+) : AnswerNavigator("此问题", environment) {
+    private val pendingInitialNextAnswers = ArrayDeque<Article>().also { deque ->
+        initialNextAnswers
+            .filter { it.type == ArticleType.Answer }
+            .forEach { deque.addLast(it) }
+    }
+    private val hasInitialNextAnswers = pendingInitialNextAnswers.isNotEmpty()
     private val destinations = ArrayDeque<Article>()
-    private val previousQueue = mutableStateListOf<Article>()
-    private var nextUrl: String = ""
+    private val previousQueue = mutableStateListOf<Article>().also { list ->
+        list.addAll(initialPreviousAnswers.filter { it.type == ArticleType.Answer })
+    }
+    private var nextUrl: String = initialNextUrl
     private val enqueuedNextIds = mutableSetOf<Long>()
-    private val enqueuedPrevIds = mutableSetOf<Long>()
+    private val enqueuedPrevIds = mutableSetOf<Long>().also { set ->
+        set.addAll(previousQueue.map { it.id })
+    }
     private val knownOpenedIds = mutableSetOf<Long>()
+    private var initialNextAnswersProcessed = false
 
     override val previousAnswerPreview: CachedAnswerContent?
         get() {
@@ -249,7 +257,7 @@ class QuestionAnswerNavigator(
         }
 
     private suspend fun fetchCached(article: Article): CachedAnswerContent? {
-        val detail = repository.fetchAnswerContent(article) ?: return null
+        val detail = environment.getOrFetchContentDetail(article) as? DataHolder.Answer ?: return null
         return CachedAnswerContent(
             article = article,
             title = detail.question.title,
@@ -263,41 +271,52 @@ class QuestionAnswerNavigator(
             createdAt = detail.createdTime,
             updatedAt = detail.updatedTime,
             ipInfo = detail.ipInfo,
+            endorsements = detail.endorsementItems,
             sourceLabel = sourceName,
         )
     }
 
     private suspend fun ensureDestinations(currentArticleId: Long) {
         if (destinations.isNotEmpty()) return
+        if (hasInitialNextAnswers && initialNextAnswersProcessed && nextUrl.isEmpty()) return
         val historyIds = answerHistory.map { it.article.id }.toSet()
-        val excludedIds = historyIds + mutableVisitedAnswerIds
         while (destinations.isEmpty()) {
-            val page = repository.fetchQuestionFeeds(
-                questionId = questionId,
-                pageUrl = nextUrl.ifEmpty { zhihuQuestionFeedsUrl(questionId, limit = 6, order = sortOrder) },
-            )
-            nextUrl = page.nextUrl
-            val data = page.items
-            val candidates = data.mapNotNull { feed -> feed.target?.navDestination as? Article }
+            val processingInitialNextAnswers = hasInitialNextAnswers && !initialNextAnswersProcessed
+            val candidates = if (processingInitialNextAnswers) {
+                initialNextAnswersProcessed = true
+                pendingInitialNextAnswers.toList()
+            } else {
+                val url = nextUrl.ifEmpty { zhihuQuestionFeedsUrl(questionId, limit = 6, order = order) }
+                val response = environment.fetchJson(url, "")
+                val page = response?.let {
+                    answerNavigatorPageFromJson(it) { data ->
+                        data.jsonArray.mapNotNull { item ->
+                            runCatching { ZhihuJson.decodeJson<Feed>(item) }.getOrNull()
+                        }
+                    }
+                } ?: AnswerNavigatorPage(emptyList(), "")
+                nextUrl = page.nextUrl
+                page.items.mapNotNull { feed -> feed.target?.navDestination as? Article }
+            }
             val idsToLookup = candidates
                 .asSequence()
                 .filter { it.type == ArticleType.Answer }
                 .map { it.id }
                 .filter { id ->
                     id != currentArticleId &&
-                        id !in excludedIds &&
+                        id !in historyIds &&
                         id !in enqueuedPrevIds &&
                         id !in enqueuedNextIds &&
                         id !in knownOpenedIds
                 }.toList()
             if (idsToLookup.isNotEmpty()) {
-                knownOpenedIds += repository.getAlreadyOpenedAnswerIds(idsToLookup)
+                knownOpenedIds += getAlreadyOpenedAnswerIds(idsToLookup)
             }
             val partition = ContentOpenEventSupport.partitionQuestionAnswerCandidates(
                 candidates = candidates,
                 openedAnswerIds = knownOpenedIds,
                 currentArticleId = currentArticleId,
-                historyIds = excludedIds,
+                historyIds = historyIds,
                 previousIds = enqueuedPrevIds,
                 nextIds = enqueuedNextIds,
             )
@@ -311,7 +330,7 @@ class QuestionAnswerNavigator(
                     destinations.addLast(article)
                 }
             }
-            if (nextUrl.isEmpty()) return
+            if (nextUrl.isEmpty() && (!processingInitialNextAnswers || hasInitialNextAnswers)) return
         }
     }
 
@@ -320,12 +339,9 @@ class QuestionAnswerNavigator(
         if (prefetched != null) {
             previousAnswerContent = null
             previousQueue.removeFirstOrNull()
-            if (isVisitedInCurrentSession(prefetched.article.id)) {
-                return loadPrevious()
-            }
             return insertPrevious(prefetched)
         }
-        val article = removeNextUnvisitedPreviousArticle() ?: return null
+        val article = previousQueue.removeFirstOrNull() ?: return null
         val cached = try {
             fetchCached(article)
         } catch (e: Exception) {
@@ -344,18 +360,14 @@ class QuestionAnswerNavigator(
             val article = nextAnswerContent!!.article
             nextAnswerContent = null
             destinations.removeFirstOrNull()
-            if (isVisitedInCurrentSession(article.id)) {
-                return loadNext()
-            }
             return article
         }
         ensureDestinations(-1L)
-        return removeNextUnvisitedDestination()
+        return destinations.removeFirstOrNull()
     }
 
     override suspend fun prefetchPrevious(currentArticleId: Long) {
         if (previousAnswerContent != null) return
-        dropVisitedPreviousArticles()
         val article = previousQueue.firstOrNull() ?: return
         try {
             previousAnswerContent = fetchCached(article)
@@ -367,11 +379,10 @@ class QuestionAnswerNavigator(
     override suspend fun prefetchNext(currentArticleId: Long) {
         if (nextAnswerContent != null) return
         ensureDestinations(currentArticleId)
-        dropVisitedDestinations()
         val nextDest = destinations.firstOrNull() ?: return
         if (nextDest.type != ArticleType.Answer) return
         try {
-            val detail = repository.fetchAnswerContent(nextDest) ?: return
+            val detail = environment.getOrFetchContentDetail(nextDest) as? DataHolder.Answer ?: return
             nextAnswerContent = CachedAnswerContent(
                 article = nextDest,
                 title = detail.question.title,
@@ -385,33 +396,12 @@ class QuestionAnswerNavigator(
                 createdAt = detail.createdTime,
                 updatedAt = detail.updatedTime,
                 ipInfo = detail.ipInfo,
+                endorsements = detail.endorsementItems,
                 sourceLabel = sourceName,
             )
         } catch (e: Exception) {
             Log.w("QuestionAnswerNavigator", "Failed to pre-load next answer content", e)
         }
-    }
-
-    private fun dropVisitedPreviousArticles() {
-        while (previousQueue.firstOrNull()?.id?.let(::isVisitedInCurrentSession) == true) {
-            previousQueue.removeFirstOrNull()
-        }
-    }
-
-    private fun removeNextUnvisitedPreviousArticle(): Article? {
-        dropVisitedPreviousArticles()
-        return previousQueue.removeFirstOrNull()
-    }
-
-    private fun dropVisitedDestinations() {
-        while (destinations.firstOrNull()?.id?.let(::isVisitedInCurrentSession) == true) {
-            destinations.removeFirstOrNull()
-        }
-    }
-
-    private fun removeNextUnvisitedDestination(): Article? {
-        dropVisitedDestinations()
-        return destinations.removeFirstOrNull()
     }
 }
 
@@ -428,8 +418,8 @@ class CollectionAnswerNavigator(
     collectionTitle: String,
     initialNextItems: List<CollectionItem>,
     initialPreviousItems: List<CollectionItem> = emptyList(),
-    repository: AnswerNavigatorRepository,
-) : AnswerNavigator("「$collectionTitle」", repository) {
+    environment: ZhihuApiEnvironment,
+) : AnswerNavigator("「$collectionTitle」", environment) {
     private val queue = ArrayDeque<Article>().also { deque ->
         initialNextItems.forEach { item ->
             val article = item.content.navDestination as? Article
@@ -467,7 +457,14 @@ class CollectionAnswerNavigator(
     private suspend fun ensureQueue() {
         if (queue.isNotEmpty() || prefetchedArticle != null) return
         if (nextPageUrl.isEmpty()) return
-        val page = repository.fetchCollectionItems(nextPageUrl)
+        val response = environment.fetchJson(nextPageUrl, "")
+        val page = response?.let {
+            answerNavigatorPageFromJson(it) { data ->
+                data.jsonArray.mapNotNull { item ->
+                    runCatching { ZhihuJson.decodeJson<CollectionItem>(item) }.getOrNull()
+                }
+            }
+        } ?: AnswerNavigatorPage(emptyList(), "")
         nextPageUrl = page.nextUrl
         page.items.forEach { item ->
             val article = item.content.navDestination as? Article
@@ -485,7 +482,7 @@ class CollectionAnswerNavigator(
         }
         val article = previousQueue.removeFirstOrNull() ?: return null
         val cached = try {
-            val detail = repository.fetchAnswerContent(article)
+            val detail = environment.getOrFetchContentDetail(article) as? DataHolder.Answer
             if (detail != null) {
                 CachedAnswerContent(
                     article = article,
@@ -500,6 +497,7 @@ class CollectionAnswerNavigator(
                     createdAt = detail.createdTime,
                     updatedAt = detail.updatedTime,
                     ipInfo = detail.ipInfo,
+                    endorsements = detail.endorsementItems,
                     sourceLabel = sourceName,
                 )
             } else {
@@ -521,7 +519,7 @@ class CollectionAnswerNavigator(
         if (previousAnswerContent != null) return
         val article = previousQueue.firstOrNull() ?: return
         try {
-            val detail = repository.fetchAnswerContent(article) ?: return
+            val detail = environment.getOrFetchContentDetail(article) as? DataHolder.Answer ?: return
             previousAnswerContent = CachedAnswerContent(
                 article = article,
                 title = detail.question.title,
@@ -535,6 +533,7 @@ class CollectionAnswerNavigator(
                 createdAt = detail.createdTime,
                 updatedAt = detail.updatedTime,
                 ipInfo = detail.ipInfo,
+                endorsements = detail.endorsementItems,
                 sourceLabel = sourceName,
             )
         } catch (e: Exception) {
@@ -550,7 +549,7 @@ class CollectionAnswerNavigator(
             prefetchedArticle = queue.removeFirstOrNull()
         }
         try {
-            val detail = repository.fetchAnswerContent(article) ?: return
+            val detail = environment.getOrFetchContentDetail(article) as? DataHolder.Answer ?: return
             nextAnswerContent = CachedAnswerContent(
                 article = article,
                 title = detail.question.title,
@@ -564,6 +563,7 @@ class CollectionAnswerNavigator(
                 createdAt = detail.createdTime,
                 updatedAt = detail.updatedTime,
                 ipInfo = detail.ipInfo,
+                endorsements = detail.endorsementItems,
                 sourceLabel = sourceName,
             )
         } catch (e: Exception) {
@@ -598,8 +598,8 @@ class CollectionAnswerNavigator(
 class PaginationInfoNavigator(
     val questionId: Long,
     initialPaginationInfo: DataHolder.Answer.PaginationInfo,
-    repository: AnswerNavigatorRepository,
-) : AnswerNavigator("此问题", repository) {
+    environment: ZhihuApiEnvironment,
+) : AnswerNavigator("此问题", environment) {
     // 前进队列（有序，无重复）
     private val nextQueue = ArrayDeque<Long>().also { it.addAll(initialPaginationInfo.nextAnswerIds.distinct()) }
 
@@ -632,43 +632,21 @@ class PaginationInfoNavigator(
             )
         }
 
-    /**
-     * 每次成功加载回答后调用，将新的 paginationInfo 中的 ids 去重后追加进队列。
-     * nextAnswerIds 追加到队尾；prevAnswerIds 逆序插入队头（最近的排最前）。
-     */
-    fun updateFromPaginationInfo(info: DataHolder.Answer.PaginationInfo) {
-        // nextQueue：追加尾部，去重
-        info.nextAnswerIds.forEach { id ->
-            if (isVisitedInCurrentSession(id)) return@forEach
-            if (enqueuedNextIds.add(id)) nextQueue.addLast(id)
-        }
-        lastKnownNextId = info.nextAnswerIds.lastOrNull() ?: lastKnownNextId
-
-        // prevQueue：逆序插入头部（prevAnswerIds[0] 是最近的，应排最前）
-        // 同时过滤已在 answerHistory 中的 id，避免重复导航
-        val historyIds = answerHistory.map { it.article.id }.toSet()
-        info.prevAnswerIds.asReversed().forEach { id ->
-            if (enqueuedPrevIds.add(id) && id !in historyIds && !isVisitedInCurrentSession(id)) {
-                prevQueue.addFirst(id)
-            }
-        }
-    }
-
     private suspend fun ensureNextQueue() {
         val id = lastKnownNextId ?: return
         if (nextQueue.isNotEmpty()) return
         val dest = Article(id = id, type = ArticleType.Answer)
-        val detail = repository.fetchAnswerContent(dest) ?: return
+        val detail = environment.getOrFetchContentDetail(dest) as? DataHolder.Answer ?: return
         val pagination = detail.paginationInfo ?: return
+        val historyIds = answerHistory.map { it.article.id }.toSet()
         pagination.nextAnswerIds.forEach { newId ->
-            if (isVisitedInCurrentSession(newId)) return@forEach
+            if (newId in historyIds) return@forEach
             if (enqueuedNextIds.add(newId)) nextQueue.addLast(newId)
         }
         lastKnownNextId = pagination.nextAnswerIds.lastOrNull() ?: lastKnownNextId
         // 续链时同步填充 prevQueue
-        val historyIds = answerHistory.map { it.article.id }.toSet()
         pagination.prevAnswerIds.asReversed().forEach { newId ->
-            if (enqueuedPrevIds.add(newId) && newId !in historyIds && !isVisitedInCurrentSession(newId)) {
+            if (enqueuedPrevIds.add(newId) && newId !in historyIds) {
                 prevQueue.addFirst(newId)
             }
         }
@@ -676,7 +654,7 @@ class PaginationInfoNavigator(
 
     private suspend fun fetchCached(answerId: Long): CachedAnswerContent? {
         val dest = Article(id = answerId, type = ArticleType.Answer)
-        val detail = repository.fetchAnswerContent(dest) ?: return null
+        val detail = environment.getOrFetchContentDetail(dest) as? DataHolder.Answer ?: return null
         return CachedAnswerContent(
             article = dest,
             title = detail.question.title,
@@ -690,6 +668,7 @@ class PaginationInfoNavigator(
             createdAt = detail.createdTime,
             updatedAt = detail.updatedTime,
             ipInfo = detail.ipInfo,
+            endorsements = detail.endorsementItems,
             sourceLabel = sourceName,
         )
     }
@@ -700,12 +679,9 @@ class PaginationInfoNavigator(
         if (prefetched != null) {
             previousAnswerContent = null
             prevQueue.removeFirstOrNull() // 消费队头 id（prefetchPrevious 使用 firstOrNull 不弹出）
-            if (isVisitedInCurrentSession(prefetched.article.id)) {
-                return loadPrevious()
-            }
             return insertPrevious(prefetched)
         }
-        val id = removeNextUnvisitedPrevId() ?: return null
+        val id = prevQueue.removeFirstOrNull() ?: return null
         val cached = try {
             fetchCached(id)
         } catch (e: Exception) {
@@ -728,13 +704,10 @@ class PaginationInfoNavigator(
             if (dequeued != null && dequeued != article.id) {
                 Log.w("PaginationInfoNavigator", "Queue head $dequeued != prefetched ${article.id}, possible state mismatch")
             }
-            if (isVisitedInCurrentSession(article.id)) {
-                return loadNext()
-            }
             return article
         }
         ensureNextQueue()
-        val id = removeNextUnvisitedNextId() ?: return null
+        val id = nextQueue.removeFirstOrNull() ?: return null
         return Article(id = id, type = ArticleType.Answer)
     }
 
@@ -742,7 +715,6 @@ class PaginationInfoNavigator(
     override suspend fun prefetchNext(currentArticleId: Long) {
         if (nextAnswerContent != null) return
         ensureNextQueue()
-        dropVisitedNextIds()
         val id = nextQueue.firstOrNull() ?: return
         try {
             nextAnswerContent = fetchCached(id)
@@ -753,34 +725,11 @@ class PaginationInfoNavigator(
 
     override suspend fun prefetchPrevious(currentArticleId: Long) {
         if (previousAnswerContent != null) return
-        dropVisitedPrevIds()
         val id = prevQueue.firstOrNull() ?: return
         try {
             previousAnswerContent = fetchCached(id)
         } catch (e: Exception) {
             Log.w("PaginationInfoNavigator", "Failed to pre-load previous answer content", e)
         }
-    }
-
-    private fun dropVisitedNextIds() {
-        while (nextQueue.firstOrNull()?.let(::isVisitedInCurrentSession) == true) {
-            nextQueue.removeFirstOrNull()
-        }
-    }
-
-    private fun removeNextUnvisitedNextId(): Long? {
-        dropVisitedNextIds()
-        return nextQueue.removeFirstOrNull()
-    }
-
-    private fun dropVisitedPrevIds() {
-        while (prevQueue.firstOrNull()?.let(::isVisitedInCurrentSession) == true) {
-            prevQueue.removeFirstOrNull()
-        }
-    }
-
-    private fun removeNextUnvisitedPrevId(): Long? {
-        dropVisitedPrevIds()
-        return prevQueue.removeFirstOrNull()
     }
 }

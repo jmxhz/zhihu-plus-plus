@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -33,6 +33,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -122,6 +124,7 @@ import coil3.compose.AsyncImage
 import com.fleeksoft.ksoup.Ksoup
 import com.fleeksoft.ksoup.nodes.Element
 import com.github.zly2006.zhihu.markdown.RenderMarkdown
+import com.github.zly2006.zhihu.markdown.RenderVideoBox
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
 import com.github.zly2006.zhihu.navigation.LocalNavigator
@@ -145,9 +148,11 @@ import com.github.zly2006.zhihu.ui.components.VerticalReadingProgressBar
 import com.github.zly2006.zhihu.ui.components.VotersSheet
 import com.github.zly2006.zhihu.ui.components.ZhihuTwoRowsTopAppBar
 import com.github.zly2006.zhihu.ui.components.rememberPreferCollapsedExitUntilCollapsedScrollBehavior
+import com.github.zly2006.zhihu.ui.components.rememberShareDialogRuntime
 import com.github.zly2006.zhihu.util.smoothGradient
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel.CachedAnswerContent
+import com.github.zly2006.zhihu.viewmodel.addReadHistory
 import com.github.zly2006.zhihu.viewmodel.formatArticleDateTime
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
 import com.materialkolor.ktx.harmonize
@@ -156,6 +161,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.compose.resources.painterResource
 import zhihu.shared.generated.resources.Res
 import zhihu.shared.generated.resources.ic_vote_down_24dp
@@ -455,6 +463,38 @@ private fun AigcFlagSheet(
     }
 }
 
+/**
+ * 文章附件中的视频入口渲染。
+ *
+ * 只处理知乎接口里 `attachment.type=video` 的情况，将视频 ID 和缩略图交给统一的视频卡片。普通正文视频仍由 Markdown/WebView 路径处理。
+ */
+@Composable
+fun ArticleVideoAttachmentContent(attachment: JsonElement?) {
+    if (attachment
+            ?.jsonObject
+            ?.get("type")
+            ?.jsonPrimitive
+            ?.content == "video"
+    ) {
+        val videoId = attachment
+            .jsonObject["attachmentId"]
+            ?.jsonPrimitive
+            ?.content
+            ?.toLongOrNull()
+        if (videoId != null) {
+            val thumbnail = attachment
+                .jsonObject["video"]!!
+                .jsonObject["videoInfo"]!!
+                .jsonObject["thumbnail"]!!
+                .jsonPrimitive.content
+            RenderVideoBox(
+                videoId = videoId,
+                thumbnailUrl = thumbnail,
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ArticleActionsMenu(
@@ -467,7 +507,10 @@ fun ArticleActionsMenu(
     onExportRequest: () -> Unit,
     onSetImmersiveDoubleTap: () -> Unit = {},
 ) {
-    val articleActionsRuntime = rememberArticleActionsRuntime()
+    val ttsState = rememberArticleTtsState()
+    val toggleSpeech = rememberArticleSpeechToggler()
+    val openArticleInBrowser = rememberArticleBrowserOpener()
+    val shareRuntime = rememberShareDialogRuntime()
     val coroutineScope = rememberCoroutineScope()
 
     @Composable
@@ -532,7 +575,6 @@ fun ArticleActionsMenu(
 
     @Composable
     fun Content() {
-        val ttsState = articleActionsRuntime.ttsState
         MenuActionButton(
             icon = {
                 when (ttsState) {
@@ -553,7 +595,7 @@ fun ArticleActionsMenu(
             onClick = {
                 onDismissRequest()
                 if (ttsState.isSpeaking) {
-                    articleActionsRuntime.toggleSpeech(viewModel.title, viewModel.content)
+                    toggleSpeech(viewModel.title, viewModel.content)
                 } else if (ttsState !in listOf(TtsState.Error, TtsState.Uninitialized, TtsState.Initializing)) {
                     // 使用协程在后台处理文本提取，避免UI阻塞
                     viewModel.viewModelScope.launch {
@@ -565,7 +607,7 @@ fun ArticleActionsMenu(
                                 // 回到主线程执行TTS
                                 withContext(Dispatchers.Main) {
                                     if (textToRead.isNotBlank()) {
-                                        articleActionsRuntime.toggleSpeech(viewModel.title, viewModel.content)
+                                        toggleSpeech(viewModel.title, viewModel.content)
                                     }
                                 }
                             }
@@ -587,7 +629,7 @@ fun ArticleActionsMenu(
             text = "分享",
             onClick = {
                 onDismissRequest()
-                articleActionsRuntime.shareRuntime.share(
+                shareRuntime.share(
                     article,
                     articleActionText(article, viewModel.questionId, viewModel.title, viewModel.authorName),
                 )
@@ -624,7 +666,7 @@ fun ArticleActionsMenu(
             text = "复制链接",
             onClick = {
                 onDismissRequest()
-                articleActionsRuntime.shareRuntime.copyLink(
+                shareRuntime.copyLink(
                     article,
                     articleActionText(article, viewModel.questionId, viewModel.title, viewModel.authorName),
                 )
@@ -662,7 +704,7 @@ fun ArticleActionsMenu(
             text = "在电脑中打开（我计划使用浏览器插件实现，还在写，点击后请手动前往收藏夹打开）",
             onClick = {
                 coroutineScope.launch {
-                    articleActionsRuntime.openArticleInBrowser(article)
+                    openArticleInBrowser(article)
                     onDismissRequest()
                 }
             },
@@ -673,7 +715,7 @@ fun ArticleActionsMenu(
     }
 
     if (showMenu) {
-        com.github.zly2006.zhihu.ui.components.MyModalBottomSheet(onDismissRequest) {
+        MyModalBottomSheet(onDismissRequest) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -689,7 +731,7 @@ fun ArticleActionsMenu(
  * 文章/回答详情页。
  *
  * 页面负责加载知乎回答或专栏文章，展示标题、作者、正文、附件视频、评论入口、分享/复制/朗读/浏览器打开等底部操作，
- * 并根据阅读设置切换 Compose Markdown 或 WebView 渲染。回答页还承载同题回答切换手势和对应转场状态，因此改动时要同时关注
+ * 正文主路径使用 Compose Markdown 渲染。回答页还承载同题回答切换手势和对应转场状态，因此改动时要同时关注
  * `answerSwitchMode`、`buttonSkipAnswer`、`autoHideArticleBottomBar`、`titleAutoHide`、`answerDoubleTapAction` 和
  * `ARTICLE_USE_WEBVIEW_PREFERENCE_KEY`。
  */
@@ -697,6 +739,7 @@ fun ArticleActionsMenu(
     ExperimentalMaterial3Api::class,
     ExperimentalFoundationApi::class,
     ExperimentalMaterial3ExpressiveApi::class,
+    ExperimentalLayoutApi::class,
 )
 @Composable
 fun ArticleScreen(
@@ -704,10 +747,8 @@ fun ArticleScreen(
     viewModel: ArticleViewModel,
 ) {
     val navigator = LocalNavigator.current
-    val articleScreenRuntime = rememberArticleScreenRuntime()
     val environment = rememberPaginationEnvironment(allowGuestAccess = false)
-    val articleHost = articleScreenRuntime.articleHost
-    val previewPreloader = articleScreenRuntime.previewPreloader
+    val articleHost = rememberArticleHost()
     val backStackEntry by articleHost?.articleNavController?.currentBackStackEntryAsState()
         ?: remember { mutableStateOf(null) }
 
@@ -721,8 +762,10 @@ fun ArticleScreen(
     var answerSwitchMode by remember {
         mutableStateOf(articleSettings.answerSwitchMode)
     }
+    var answerSwitchSensitivity by remember {
+        mutableFloatStateOf(articleSettings.answerSwitchSensitivity)
+    }
     var pinAnswerDate by remember { mutableStateOf(articleSettings.pinAnswerDate) }
-    val readHistoryRecorder = rememberArticleReadHistoryRecorder()
     val userMessages = rememberUserMessageSink()
 
     var previousScrollValue by remember { mutableIntStateOf(0) }
@@ -750,8 +793,6 @@ fun ArticleScreen(
             articleSettings.answerDoubleTapAction,
         )
     }
-    var useWebView by remember { mutableStateOf(articleSettings.useWebView) }
-
     // 跟手隐藏标题栏和底栏：用滚动增量直接驱动像素偏移。
     val topBarOffset = remember { Animatable(0f) }
     val bottomBarOffset = remember { Animatable(0f) }
@@ -761,7 +802,10 @@ fun ArticleScreen(
     var isBarSnapping by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        readHistoryRecorder.addReadHistory(article)
+        environment.addReadHistory(
+            contentToken = article.id.toString(),
+            contentTypeName = article.type.name.lowercase(),
+        )
     }
 
     fun upVoteFromDoubleTap() {
@@ -837,11 +881,11 @@ fun ArticleScreen(
     LaunchedEffect(articleSettings.answerSwitchMode) {
         answerSwitchMode = articleSettings.answerSwitchMode
     }
+    LaunchedEffect(articleSettings.answerSwitchSensitivity) {
+        answerSwitchSensitivity = articleSettings.answerSwitchSensitivity
+    }
     LaunchedEffect(articleSettings.pinAnswerDate) {
         pinAnswerDate = articleSettings.pinAnswerDate
-    }
-    LaunchedEffect(articleSettings.useWebView) {
-        useWebView = articleSettings.useWebView
     }
     LaunchedEffect(articleSettings.answerDoubleTapAction) {
         answerDoubleTapAction = articleSettings.answerDoubleTapAction
@@ -1025,6 +1069,7 @@ fun ArticleScreen(
                 viewModel.content = pending.content
                 viewModel.voteUpCount = pending.voteUpCount
                 viewModel.commentCount = pending.commentCount
+                viewModel.endorsements = pending.endorsements
                 sharedData.pendingInitialContent = null
             }
         }
@@ -1144,7 +1189,8 @@ fun ArticleScreen(
     }
 
     @OptIn(ExperimentalMaterial3Api::class)
-    val answerSwitchContent: @Composable () -> Unit = {
+    @Composable
+    fun MainContent() {
         val scrollBehavior = rememberPreferCollapsedExitUntilCollapsedScrollBehavior()
         // 记录历史最大滚动范围，避免顶栏展开/收起时 maxValue 短暂变化导致 scrollBehavior 抖动。
         var scrollStateMaxValue by remember { mutableIntStateOf(0) }
@@ -1160,7 +1206,7 @@ fun ArticleScreen(
             topBar = if (isImmersiveMode) {
                 {}
             } else {
-                @Composable {
+                {
                     Box(
                         modifier = Modifier
                             .onSizeChanged {
@@ -1635,8 +1681,7 @@ fun ArticleScreen(
                                 ArticleType.Article -> "文章"
                             }
                             val hasVotersSocialCredit = viewModel.votersTotal > 0
-                            val aigcSupportVoterCount = viewModel.aigcSupportVoterCount
-                            if (!hasVotersSocialCredit && aigcSupportVoterCount <= 0) return
+                            if (!hasVotersSocialCredit && viewModel.aigcSupportVoterCount <= 0) return
                             Spacer(modifier = Modifier.height(8.dp))
                             if (hasVotersSocialCredit) {
                                 val text = viewModel.votersSocialText.ifBlank {
@@ -1659,38 +1704,50 @@ fun ArticleScreen(
                                     modifier = votersTextModifier,
                                 )
                             }
-                            if (aigcSupportVoterCount > 0) {
+                            if (viewModel.aigcSupportVoterCount > 0) {
                                 if (hasVotersSocialCredit) {
                                     Spacer(modifier = Modifier.height(4.dp))
                                 }
                                 Text(
-                                    text = "有 ${formatCompactCount(aigcSupportVoterCount)} 人认为此${contentLabel}包含AIGC内容",
+                                    text = "有 ${formatCompactCount(viewModel.aigcSupportVoterCount)} 人认为此${contentLabel}包含AIGC内容",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.error,
                                 )
                             }
                         }
 
-                        @Composable
-                        fun ColumnScope.AnswerLeadingMeta() {
+                        if (viewModel.content.isNotEmpty() || viewModel.attachment != null) {
                             val hasPinnedDate = pinAnswerDate
                             val hasSocialCredit = viewModel.votersTotal > 0 || viewModel.aigcSupportVoterCount > 0
-                            if (!hasPinnedDate && !hasSocialCredit) return
-                            Column(
-                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                                horizontalAlignment = Alignment.Start,
-                            ) {
-                                if (hasPinnedDate) {
-                                    DateTexts()
+                            val endorsements = viewModel.endorsements
+                            val hasEndorsements = endorsements.isNotEmpty()
+                            if (hasPinnedDate || hasSocialCredit || hasEndorsements) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                    horizontalAlignment = Alignment.Start,
+                                ) {
+                                    if (hasPinnedDate) {
+                                        DateTexts()
+                                    }
+                                    ArticleVotersSocialCredit()
+                                    if (hasEndorsements) {
+                                        if (hasPinnedDate || hasSocialCredit) {
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                        }
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            endorsements.forEach { endorsement ->
+                                                AnswerEndorsementChip(endorsement)
+                                            }
+                                        }
+                                    }
                                 }
-                                ArticleVotersSocialCredit()
+                                Spacer(modifier = Modifier.height(16.dp))
                             }
-                            Spacer(modifier = Modifier.height(16.dp))
-                        }
-
-                        if (viewModel.content.isNotEmpty() || viewModel.attachment != null) {
-                            if (useWebView) {
-                                AnswerLeadingMeta()
+                            if (articleSettings.useWebView) {
+                                // WebView 正文渲染已经废弃，只保留为紧急回退路径；正文外 UI 不再为它单独分支。
                                 ArticleWebViewContent(
                                     article = article,
                                     html = viewModel.content,
@@ -1719,7 +1776,6 @@ fun ArticleScreen(
                                 }
                                 Spacer(modifier = Modifier.height((16 + 36).dp))
                             } else {
-                                AnswerLeadingMeta()
                                 RenderMarkdown(
                                     html = viewModel.content,
                                     modifier = Modifier.articleMarkdownSelectionWorkaround(),
@@ -1767,18 +1823,11 @@ fun ArticleScreen(
 
     val nav = sharedData?.navigator
     if (article.type == ArticleType.Answer && answerSwitchMode == "horizontal") {
-        // 预加载预览内容，确保滑动前相邻回答已经准备好。
-        LaunchedEffect(nav?.nextAnswer) {
-            val cached = nav?.nextAnswer ?: return@LaunchedEffect
-            previewPreloader.preloadPreview(cached, isNext = true, viewModel.title) {
-                userMessages.showMessage("图片加载失败，请向开发者反馈")
-            }
+        ArticlePreviewPreloadEffect(nav?.nextAnswer, isNext = true, viewModel.title) {
+            userMessages.showMessage("图片加载失败，请向开发者反馈")
         }
-        LaunchedEffect(nav?.previousAnswer) {
-            val cached = nav?.previousAnswer ?: return@LaunchedEffect
-            previewPreloader.preloadPreview(cached, isNext = false, viewModel.title) {
-                userMessages.showMessage("图片加载失败，请向开发者反馈")
-            }
+        ArticlePreviewPreloadEffect(nav?.previousAnswer, isNext = false, viewModel.title) {
+            userMessages.showMessage("图片加载失败，请向开发者反馈")
         }
     }
     val progressBarTopPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 64.dp
@@ -1797,8 +1846,9 @@ fun ArticleScreen(
                 isAtTop = { scrollState.value == 0 },
                 isAtBottom = { scrollState.value >= scrollState.maxValue },
                 scrollState = scrollState,
+                answerSwitchSensitivity = answerSwitchSensitivity,
             ) {
-                answerSwitchContent()
+                MainContent()
             }
         } else if (article.type == ArticleType.Answer && answerSwitchMode == "horizontal") {
             AnswerHorizontalOverscroll(
@@ -1812,11 +1862,12 @@ fun ArticleScreen(
                 nextContent = nav?.nextAnswer?.let { cached ->
                     { CachedAnswerPreview(cached) }
                 },
+                answerSwitchSensitivity = answerSwitchSensitivity,
             ) {
-                answerSwitchContent()
+                MainContent()
             }
         } else {
-            answerSwitchContent()
+            MainContent()
         }
 
         VerticalReadingProgressBar(
@@ -2046,6 +2097,7 @@ fun ArticleScreen(
  * 内容来自 [CachedAnswerContent]，包含标题、作者信息、投票/评论计数和 HTML 正文。正文使用 Compose Markdown，
  * 因此这里是轻量预览，不持有 WebView 或答案切换共享状态。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CachedAnswerPreview(
     cached: CachedAnswerContent,
@@ -2172,6 +2224,17 @@ private fun CachedAnswerPreview(
                             fontSize = 12.sp,
                             color = Color.Gray,
                         )
+                    }
+                }
+            }
+            if (cached.endorsements.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    cached.endorsements.forEach { endorsement ->
+                        AnswerEndorsementChip(endorsement)
                     }
                 }
             }

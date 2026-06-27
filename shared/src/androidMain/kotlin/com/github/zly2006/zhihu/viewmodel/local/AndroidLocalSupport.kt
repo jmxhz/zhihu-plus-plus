@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -20,8 +20,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
-import androidx.room.Room
-import com.github.zly2006.zhihu.data.AccountData
+import com.github.zly2006.zhihu.data.asApiEnvironment
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonArray
 import kotlin.jvm.java
@@ -31,7 +30,11 @@ fun LocalRecommendationEngine(context: Context): LocalRecommendationEngine {
     return buildLocalRecommendationEngine(
         dao = dao,
         fetchFeedArray = { url ->
-            AccountData.fetchGet(context, url)?.get("data")?.jsonArray ?: JsonArray(emptyList())
+            context
+                .asApiEnvironment()
+                .fetchJson(url, "")
+                ?.get("data")
+                ?.jsonArray ?: JsonArray(emptyList())
         },
         isNetworkAvailable = { isLocalRecommendationNetworkAvailable(context) },
         logWarning = { message -> Log.w("LocalRecommendationEngine", message) },
@@ -47,20 +50,3 @@ private fun isLocalRecommendationNetworkAvailable(context: Context): Boolean = t
 } catch (_: Exception) {
     false
 }
-
-private const val LOCAL_CONTENT_DATABASE_NAME = "local_content_database"
-
-@Volatile
-private var localContentDatabase: LocalContentDatabase? = null
-
-fun getLocalContentDatabase(context: Context): LocalContentDatabase =
-    localContentDatabase ?: synchronized(LocalContentDatabase::class) {
-        localContentDatabase ?: buildLocalContentDatabase(
-            Room.databaseBuilder<LocalContentDatabase>(
-                context.applicationContext,
-                LOCAL_CONTENT_DATABASE_NAME,
-            ),
-        ).also {
-            localContentDatabase = it
-        }
-    }

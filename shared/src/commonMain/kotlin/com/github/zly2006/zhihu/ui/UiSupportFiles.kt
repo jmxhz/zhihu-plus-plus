@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -16,64 +16,47 @@
  */
 
 package com.github.zly2006.zhihu.ui
+
 import androidx.compose.foundation.ScrollState
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.InlineTextContent
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.fleeksoft.ksoup.Ksoup
 import com.github.zly2006.zhihu.markdown.RenderMarkdown
-import com.github.zly2006.zhihu.markdown.RenderVideoBox
 import com.github.zly2006.zhihu.navigation.AnswerNavigator
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
-import com.github.zly2006.zhihu.navigation.LocalNavigator
 import com.github.zly2006.zhihu.navigation.NavDestination
 import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.navigation.TopLevelDestination
-import com.github.zly2006.zhihu.navigation.resolveContent
 import com.github.zly2006.zhihu.shared.data.DataHolder
-import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
-import com.github.zly2006.zhihu.shared.data.RecommendationMode
-import com.github.zly2006.zhihu.shared.data.officialBadge
-import com.github.zly2006.zhihu.shared.data.officialBadgeDetails
 import com.github.zly2006.zhihu.shared.filter.ContentOpenFrom
 import com.github.zly2006.zhihu.shared.platform.SettingsStore
 import com.github.zly2006.zhihu.shared.platform.UserMessageSink
 import com.github.zly2006.zhihu.shared.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.shared.ui.ANSWER_DOUBLE_TAP_ACTION_PREFERENCE_KEY
 import com.github.zly2006.zhihu.shared.ui.AnswerDoubleTapAction
-import com.github.zly2006.zhihu.ui.components.ShareDialogRuntime
+import com.github.zly2006.zhihu.ui.components.ANSWER_SWITCH_SENSITIVITY_PREFERENCE_KEY
+import com.github.zly2006.zhihu.ui.components.DEFAULT_ANSWER_SWITCH_SENSITIVITY
+import com.github.zly2006.zhihu.ui.components.normalizedAnswerSwitchSensitivity
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel.CachedAnswerContent
-import com.github.zly2006.zhihu.viewmodel.HistoryEnvironment
-import com.github.zly2006.zhihu.viewmodel.feed.BaseFeedViewModel
-import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
+import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
+import com.github.zly2006.zhihu.viewmodel.getOrFetchContentDetail
 import io.ktor.client.HttpClient
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 data class PinLikeResult(
@@ -81,18 +64,14 @@ data class PinLikeResult(
     val likeCount: Int,
 )
 
-data class PinScreenRuntime(
-    val fetchLinkCardPreview: suspend (DataHolder.Pin.ContentLinkCard) -> PinLinkCardPreview?,
-)
-
 internal suspend fun fetchPinLinkCardPreview(
     linkCard: DataHolder.Pin.ContentLinkCard,
-    fetchDetail: suspend (NavDestination) -> DataHolder.Content?,
+    env: ZhihuApiEnvironment,
 ): PinLinkCardPreview? {
     val destination = resolveLinkCardDestination(linkCard) ?: return null
     return when (destination) {
         is Article -> {
-            when (val detail = fetchDetail(destination)) {
+            when (val detail = env.getOrFetchContentDetail(destination)) {
                 is DataHolder.Article -> PinLinkCardPreview(
                     title = compactTitle(detail.title),
                     preview = compactPreview(detail.excerpt.ifBlank { detail.content }),
@@ -105,7 +84,7 @@ internal suspend fun fetchPinLinkCardPreview(
             }
         }
         is Question -> {
-            (fetchDetail(destination) as? DataHolder.Question)?.let { detail ->
+            (env.getOrFetchContentDetail(destination) as? DataHolder.Question)?.let { detail ->
                 PinLinkCardPreview(
                     title = compactTitle(detail.title),
                     preview = compactPreview(detail.detail),
@@ -113,7 +92,7 @@ internal suspend fun fetchPinLinkCardPreview(
             }
         }
         is Pin -> {
-            (fetchDetail(destination) as? DataHolder.Pin)?.let { detail ->
+            (env.getOrFetchContentDetail(destination) as? DataHolder.Pin)?.let { detail ->
                 PinLinkCardPreview(
                     title = "${detail.author.name} 的想法",
                     preview = compactPreview(detail.contentHtml),
@@ -131,9 +110,6 @@ internal fun JsonObject?.booleanCompat(vararg keys: String): Boolean {
     } ?: false
 }
 
-@Composable
-expect fun rememberPinScreenRuntime(): PinScreenRuntime
-
 /**
  * 想法正文的 HTML 渲染入口。
  *
@@ -143,9 +119,9 @@ expect fun rememberPinScreenRuntime(): PinScreenRuntime
 @Composable
 fun PinHtmlContent(html: String) {
     if (rememberSettingsStore().getBoolean(ARTICLE_USE_WEBVIEW_PREFERENCE_KEY, false) &&
-        supportsPinHtmlWebView()
+        supportsZhihuHtmlWebView()
     ) {
-        PinHtmlWebViewContent(html)
+        ZhihuHtmlWebViewContent(html)
     } else {
         Spacer(Modifier.height(10.dp))
         RenderMarkdown(
@@ -153,98 +129,14 @@ fun PinHtmlContent(html: String) {
             modifier = Modifier.questionSelectionWorkaround(),
             selectable = true,
             enableScroll = false,
-            internalLinkCardContent = { url ->
-                PinInternalLinkCard(url)
-            },
         )
     }
 }
 
-@Composable
-private fun PinInternalLinkCard(url: String) {
-    val destination = remember(url) { resolveContent(url) } ?: return
-    val navigator = LocalNavigator.current
-    val runtime = rememberPinScreenRuntime()
-    val linkCard = remember(url, destination) {
-        when (destination) {
-            is Article -> DataHolder.Pin.ContentLinkCard(
-                dataContentId = destination.id.toString(),
-                dataContentType = when (destination.type) {
-                    ArticleType.Answer -> "answer"
-                    ArticleType.Article -> "article"
-                },
-                url = url,
-            )
-            is Question -> DataHolder.Pin.ContentLinkCard(
-                dataContentId = destination.questionId.toString(),
-                dataContentType = "question",
-                url = url,
-            )
-            is Pin -> DataHolder.Pin.ContentLinkCard(
-                dataContentId = destination.id.toString(),
-                dataContentType = "pin",
-                url = url,
-            )
-            else -> null
-        }
-    } ?: return
-    var preview by remember(url) { mutableStateOf<PinLinkCardPreview?>(null) }
-    var isLoading by remember(url) { mutableStateOf(true) }
-
-    LaunchedEffect(url, linkCard) {
-        isLoading = true
-        preview = runtime.fetchLinkCardPreview(linkCard)
-        isLoading = false
-    }
-
-    Spacer(Modifier.height(8.dp))
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { navigator.onNavigate(destination) },
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        ),
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-        ) {
-            Text(
-                text = linkCardTypeLabel(linkCard.dataContentType),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Text(
-                text = when {
-                    isLoading -> "Loading..."
-                    !preview?.title.isNullOrBlank() -> preview?.title.orEmpty()
-                    else -> url
-                },
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val previewText = preview?.preview
-            if (!previewText.isNullOrBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = previewText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
-    Spacer(Modifier.height(8.dp))
-}
-
-expect fun supportsPinHtmlWebView(): Boolean
+expect fun supportsZhihuHtmlWebView(): Boolean
 
 @Composable
-expect fun PinHtmlWebViewContent(html: String)
+expect fun ZhihuHtmlWebViewContent(html: String)
 
 /**
  * 文章页 Compose UI 使用的运行时设置视图。
@@ -257,6 +149,7 @@ class ArticleScreenSettingsState(
     isTitleAutoHide: Boolean,
     autoHideArticleBottomBar: Boolean,
     answerSwitchMode: String,
+    answerSwitchSensitivity: Float,
     pinAnswerDate: Boolean,
     useDuo3ArticleActions: Boolean,
     buttonSkipAnswer: Boolean,
@@ -268,6 +161,7 @@ class ArticleScreenSettingsState(
     var isTitleAutoHide by mutableStateOf(isTitleAutoHide)
     var autoHideArticleBottomBar by mutableStateOf(autoHideArticleBottomBar)
     var answerSwitchMode by mutableStateOf(answerSwitchMode)
+    var answerSwitchSensitivity by mutableFloatStateOf(answerSwitchSensitivity)
     var pinAnswerDate by mutableStateOf(pinAnswerDate)
     var useDuo3ArticleActions by mutableStateOf(useDuo3ArticleActions)
     var buttonSkipAnswer by mutableStateOf(buttonSkipAnswer)
@@ -295,6 +189,12 @@ fun rememberArticleScreenSettingsState(): ArticleScreenSettingsState {
             isTitleAutoHide = settings.getBoolean("titleAutoHide", false),
             autoHideArticleBottomBar = settings.getBoolean("autoHideArticleBottomBar", false),
             answerSwitchMode = settings.getString("answerSwitchMode", "vertical"),
+            answerSwitchSensitivity = normalizedAnswerSwitchSensitivity(
+                settings.getFloat(
+                    ANSWER_SWITCH_SENSITIVITY_PREFERENCE_KEY,
+                    DEFAULT_ANSWER_SWITCH_SENSITIVITY,
+                ),
+            ),
             pinAnswerDate = settings.getBoolean("pinAnswerDate", false),
             useDuo3ArticleActions = settings.getBoolean("duo3_article_actions", false),
             buttonSkipAnswer = settings.getBoolean("buttonSkipAnswer", true),
@@ -324,6 +224,12 @@ fun rememberArticleScreenSettingsState(): ArticleScreenSettingsState {
                     state.answerSwitchMode = settings.getString(key, "vertical")
                 }
 
+                ANSWER_SWITCH_SENSITIVITY_PREFERENCE_KEY -> {
+                    state.answerSwitchSensitivity = normalizedAnswerSwitchSensitivity(
+                        settings.getFloat(key, DEFAULT_ANSWER_SWITCH_SENSITIVITY),
+                    )
+                }
+
                 "pinAnswerDate" -> state.pinAnswerDate = settings.getBoolean(key, false)
                 "duo3_article_actions" -> state.useDuo3ArticleActions = settings.getBoolean(key, false)
                 ARTICLE_USE_WEBVIEW_PREFERENCE_KEY -> state.useWebView = settings.getBoolean(key, false)
@@ -346,34 +252,16 @@ private fun SettingsStore.answerDoubleTapAction(): AnswerDoubleTapAction =
         ),
     )
 
-/**
- * 共享文章页需要的平台服务。
- *
- * 文章页的布局、操作区和渲染路径由 common UI 负责；host 桥接和预加载器由平台提供，因为它们依赖 Android 的
- * Activity/NavController 所有权，或 Desktop 的窗口和运行时服务。
- */
-interface ArticleScreenRuntime {
-    val articleHost: ArticleHost?
-    val previewPreloader: ArticlePreviewPreloader
-}
-
-fun interface ArticlePreviewPreloader {
-    fun preloadPreview(
-        cached: CachedAnswerContent,
-        isNext: Boolean,
-        title: String,
-        onImageLoadFailed: () -> Unit,
-    )
-}
-
-internal fun defaultArticleScreenRuntime(): ArticleScreenRuntime =
-    object : ArticleScreenRuntime {
-        override val articleHost: ArticleHost? = null
-        override val previewPreloader = ArticlePreviewPreloader { _, _, _, _ -> }
-    }
+@Composable
+expect fun rememberArticleHost(): ArticleHost?
 
 @Composable
-expect fun rememberArticleScreenRuntime(): ArticleScreenRuntime
+expect fun ArticlePreviewPreloadEffect(
+    cached: CachedAnswerContent?,
+    isNext: Boolean,
+    title: String,
+    onImageLoadFailed: () -> Unit,
+)
 
 @Composable
 expect fun ArticleWebViewContent(
@@ -388,64 +276,8 @@ expect fun ArticleWebViewContent(
     onDoubleTap: () -> Unit,
 )
 
-/**
- * 文章附件中的视频入口渲染。
- *
- * 只处理知乎接口里 `attachment.type=video` 的情况，将视频 ID 和缩略图交给统一的视频卡片。普通正文视频仍由 Markdown/WebView 路径处理。
- */
-@Composable
-fun ArticleVideoAttachmentContent(attachment: JsonElement?) {
-    if (attachment
-            ?.jsonObject
-            ?.get("type")
-            ?.jsonPrimitive
-            ?.content == "video"
-    ) {
-        val videoId = attachment
-            .jsonObject["attachmentId"]
-            ?.jsonPrimitive
-            ?.content
-            ?.toLongOrNull()
-        if (videoId != null) {
-            val thumbnail = attachment
-                .jsonObject["video"]!!
-                .jsonObject["videoInfo"]!!
-                .jsonObject["thumbnail"]!!
-                .jsonPrimitive.content
-            RenderVideoBox(
-                videoId = videoId,
-                thumbnailUrl = thumbnail,
-            )
-        }
-    }
-}
-
 /** 过滤部分设备文本选择菜单中的非预期系统项。 */
 expect fun Modifier.articleMarkdownSelectionWorkaround(): Modifier
-
-data class LoadedQuestionScreenData(
-    val uiState: QuestionScreenUiState,
-    val historyDestination: Question,
-)
-
-internal fun loadedQuestionScreenData(
-    question: Question,
-    questionData: DataHolder.Question,
-): LoadedQuestionScreenData {
-    val historyDestination = Question(question.questionId, questionData.title)
-    return LoadedQuestionScreenData(
-        uiState = QuestionScreenUiState(
-            questionContent = questionData.detail,
-            answerCount = questionData.answerCount,
-            visitCount = questionData.visitCount,
-            commentCount = questionData.commentCount,
-            followerCount = questionData.followerCount,
-            title = questionData.title,
-            isFollowing = questionData.relationship.isFollowing,
-        ),
-        historyDestination = historyDestination,
-    )
-}
 
 /**
  * 问题描述正文的渲染入口。
@@ -482,26 +314,14 @@ expect fun QuestionDetailWebViewContent(
     html: String,
 )
 
-/**
- * 文章页底部操作区使用的平台桥接。
- *
- * 可见按钮由 common UI 统一绘制，但语音朗读、系统分享、剪贴板和在浏览器打开知乎原文都需要平台实现。
- * 把契约放在这里，可以让操作按钮作为 UI 被测试，同时把副作用留在 shared composable 之外。
- */
-interface ArticleActionsRuntime {
-    val ttsState: TtsState
-    val shareRuntime: ShareDialogRuntime
-
-    fun toggleSpeech(
-        title: String,
-        content: String,
-    )
-
-    fun openArticleInBrowser(article: Article)
-}
+@Composable
+expect fun rememberArticleTtsState(): TtsState
 
 @Composable
-expect fun rememberArticleActionsRuntime(): ArticleActionsRuntime
+expect fun rememberArticleSpeechToggler(): (title: String, content: String) -> Unit
+
+@Composable
+expect fun rememberArticleBrowserOpener(): (Article) -> Unit
 
 fun articleActionText(
     article: Article,
@@ -632,29 +452,17 @@ data class ZhihuMainPreferenceSnapshot(
 class ZhihuMainPreferenceState(
     private val readSnapshot: () -> ZhihuMainPreferenceSnapshot,
 ) {
-    private val initialSnapshot = readSnapshot()
+    private var snapshot by mutableStateOf(readSnapshot())
 
-    var duo3HomeAccount by mutableStateOf(initialSnapshot.duo3HomeAccount)
-        private set
-    var duo3NavStyle by mutableStateOf(initialSnapshot.duo3NavStyle)
-        private set
-    var tapToScrollToTopEnabled by mutableStateOf(initialSnapshot.tapToScrollToTopEnabled)
-        private set
-    var autoHideBottomBar by mutableStateOf(initialSnapshot.autoHideBottomBar)
-        private set
-    var selectedBottomBarItemKeys by mutableStateOf(initialSnapshot.selectedBottomBarItemKeys)
-        private set
-    var startDestination by mutableStateOf(initialSnapshot.startDestination)
-        private set
+    val duo3HomeAccount: Boolean get() = snapshot.duo3HomeAccount
+    val duo3NavStyle: Boolean get() = snapshot.duo3NavStyle
+    val tapToScrollToTopEnabled: Boolean get() = snapshot.tapToScrollToTopEnabled
+    val autoHideBottomBar: Boolean get() = snapshot.autoHideBottomBar
+    val selectedBottomBarItemKeys: List<String> get() = snapshot.selectedBottomBarItemKeys
+    val startDestination: TopLevelDestination get() = snapshot.startDestination
 
     fun reload() {
-        val snapshot = readSnapshot()
-        duo3HomeAccount = snapshot.duo3HomeAccount
-        duo3NavStyle = snapshot.duo3NavStyle
-        tapToScrollToTopEnabled = snapshot.tapToScrollToTopEnabled
-        autoHideBottomBar = snapshot.autoHideBottomBar
-        selectedBottomBarItemKeys = snapshot.selectedBottomBarItemKeys
-        startDestination = snapshot.startDestination
+        snapshot = readSnapshot()
     }
 }
 
@@ -684,24 +492,26 @@ data class AccountSettingsAccountState(
     val urlToken: String? = null,
 )
 
-/**
- * 账号设置页消费的平台与账号服务。
- *
- * composable 自己负责视觉层级：资料头部、快捷入口、设置入口和关于/许可证区域。登录、扫码、退出、版本信息和主 tab 选择仍由平台注入，
- * 这样同一套账号 UI 可以运行在 Android、Desktop、预览和测试中。
- */
-data class AccountSettingsRuntime(
-    val accountState: State<AccountSettingsAccountState>,
-    val refreshProfile: suspend () -> Unit,
-    val requestLogin: () -> Unit,
-    val requestQrLoginScan: () -> Unit,
-    val logout: () -> Unit,
-    val appVersionInfo: () -> String,
-    val selectMainTab: (TopLevelDestination) -> Unit,
-)
+@Composable
+expect fun rememberAccountSettingsAccountState(): State<AccountSettingsAccountState>
 
 @Composable
-expect fun rememberAccountSettingsPlatformRuntime(): AccountSettingsRuntime
+expect fun rememberAccountProfileRefresher(): suspend () -> Unit
+
+@Composable
+expect fun rememberAccountLoginRequester(): () -> Unit
+
+@Composable
+expect fun rememberAccountQrLoginRequester(): () -> Unit
+
+@Composable
+expect fun rememberAccountLogoutAction(): () -> Unit
+
+@Composable
+expect fun rememberAppVersionInfo(): String
+
+@Composable
+expect fun rememberMainTabSelector(): (TopLevelDestination) -> Unit
 
 fun noopSettingsStore(): SettingsStore = SettingsStore(
     getBoolean = { _, defaultValue -> defaultValue },
@@ -720,34 +530,8 @@ fun noopSettingsStore(): SettingsStore = SettingsStore(
     remove = { _ -> },
 )
 
-data class PeopleProfileLoadResult(
-    val profile: PeopleProfileUiState,
-    val urlToken: String?,
-)
-
 internal const val PEOPLE_PROFILE_INCLUDE_PATH =
     "allow_message,is_followed,is_following,is_org,is_blocking,badge_v2,answer_count,follower_count,following_count,articles_count,question_count,pins_count"
-
-internal fun toPeopleProfileLoadResult(
-    loadedPerson: DataHolder.People,
-    isBlockedInRecommendations: Boolean,
-): PeopleProfileLoadResult = PeopleProfileLoadResult(
-    profile = PeopleProfileUiState(
-        avatar = loadedPerson.avatarUrl,
-        name = loadedPerson.name,
-        headline = loadedPerson.headline,
-        officialBadge = loadedPerson.badgeV2.officialBadge(),
-        officialBadgeDetails = loadedPerson.badgeV2.officialBadgeDetails(),
-        followerCount = loadedPerson.followerCount,
-        followingCount = loadedPerson.followingCount,
-        answerCount = loadedPerson.answerCount,
-        articleCount = loadedPerson.articlesCount,
-        isFollowing = loadedPerson.isFollowing,
-        isBlocking = loadedPerson.isBlocking,
-        isBlockedInRecommendations = isBlockedInRecommendations,
-    ),
-    urlToken = loadedPerson.urlToken,
-)
 
 data class HomeAccountState(
     val isLoggedIn: Boolean,
@@ -759,51 +543,20 @@ data class HomeUpdateAnnouncement(
     val isNightly: Boolean,
 )
 
-/**
- * 首页信息流界面的运行时依赖集合。
- *
- * 首页同时组合推荐数据、账号入口、更新横幅、未读通知和可选账号面板行为。把这些依赖集中在一起后，页面本身可以专注布局：
- * 顶部操作区、信息流列表、刷新入口和临时公告。
- */
-data class HomeScreenRuntime(
-    val account: HomeAccountState,
-    val updateAnnouncement: HomeUpdateAnnouncement?,
-    val installedAtLeastThreeHours: Boolean,
-    val isDebuggable: Boolean,
-    val viewModel: BaseFeedViewModel,
-    val requestLogin: () -> Unit,
-    val recordLocalItemOpened: (FeedDisplayItem) -> Unit,
-    val recordLocalItemFeedback: (FeedDisplayItem, Double) -> Boolean,
-)
+@Composable
+expect fun rememberHomeAccountState(): HomeAccountState
 
 @Composable
-expect fun rememberHomeScreenRuntime(recommendationMode: RecommendationMode): HomeScreenRuntime
-
-fun interface ArticleReadHistoryRecorder {
-    suspend fun addReadHistory(article: Article)
-}
+expect fun rememberHomeUpdateAnnouncement(): HomeUpdateAnnouncement?
 
 @Composable
-fun rememberArticleReadHistoryRecorder(): ArticleReadHistoryRecorder {
-    val environment: HistoryEnvironment = rememberPaginationEnvironment(false)
-    return remember(environment) {
-        ArticleReadHistoryRecorder { article ->
-            environment.addReadHistory(
-                contentToken = article.id.toString(),
-                contentTypeName = article.type.name.lowercase(),
-            )
-        }
-    }
-}
-
-interface CommentScreenRuntime {
-    fun saveImage(imageUrl: String)
-
-    fun shareImage(imageUrl: String)
-}
+expect fun rememberHomeInstalledAtLeastThreeHours(): Boolean
 
 @Composable
-expect fun rememberCommentScreenRuntime(): CommentScreenRuntime
+expect fun rememberHomeIsDebuggable(): Boolean
+
+@Composable
+expect fun rememberHomeLoginRequester(): () -> Unit
 
 @Composable
 expect fun rememberCommentEmojiInlineContent(emojiKeys: Set<String>): Map<String, InlineTextContent>
@@ -812,15 +565,13 @@ expect fun commentEmojiInlineKey(placeholder: String): String?
 
 expect fun Modifier.commentSelectionWorkaround(): Modifier
 
-data class BlocklistSettingsRuntime(
-    val requestImport: (((String) -> Unit) -> Unit),
-    val exportRules: suspend () -> String,
-)
+@Composable
+expect fun rememberBlocklistRuleImporter(
+    userMessages: UserMessageSink,
+): (((String) -> Unit) -> Unit)
 
 @Composable
-expect fun rememberBlocklistSettingsPlatformRuntime(
-    userMessages: UserMessageSink,
-): BlocklistSettingsRuntime
+expect fun rememberBlocklistRuleExporter(): suspend () -> String
 
 @Composable
 expect fun rememberZhihuHttpClient(): HttpClient

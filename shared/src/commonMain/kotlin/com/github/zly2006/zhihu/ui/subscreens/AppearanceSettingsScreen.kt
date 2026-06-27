@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -100,36 +100,32 @@ import com.github.zly2006.zhihu.shared.ui.ANSWER_DOUBLE_TAP_ACTION_PREFERENCE_KE
 import com.github.zly2006.zhihu.shared.ui.AnswerDoubleTapAction
 import com.github.zly2006.zhihu.theme.ThemeManager
 import com.github.zly2006.zhihu.ui.ARTICLE_USE_WEBVIEW_PREFERENCE_KEY
+import com.github.zly2006.zhihu.ui.components.ANSWER_SWITCH_SENSITIVITY_PREFERENCE_KEY
 import com.github.zly2006.zhihu.ui.components.ColorPickerDialog
+import com.github.zly2006.zhihu.ui.components.DEFAULT_ANSWER_SWITCH_SENSITIVITY
+import com.github.zly2006.zhihu.ui.components.MAX_ANSWER_SWITCH_SENSITIVITY
+import com.github.zly2006.zhihu.ui.components.MIN_ANSWER_SWITCH_SENSITIVITY
 import com.github.zly2006.zhihu.ui.components.SettingItem
 import com.github.zly2006.zhihu.ui.components.SettingItemGroup
 import com.github.zly2006.zhihu.ui.components.SettingItemOverall
 import com.github.zly2006.zhihu.ui.components.SettingItemWithSwitch
+import com.github.zly2006.zhihu.ui.components.normalizedAnswerSwitchSensitivity
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 
 const val DUO3_CARD_LARGE_TITLE_PREFERENCE_KEY = "duo3_card_large_title"
 const val PREF_FONT_SIZE = "contentFontSize"
 const val PREF_LINE_HEIGHT = "contentLineHeight"
+const val PREF_BLOCK_SPACING = "contentBlockSpacing"
 const val APPEARANCE_SETTINGS_SCROLL_TAG = "appearanceSettings.scroll"
 const val APPEARANCE_SETTINGS_START_DESTINATION_TAG = "appearanceSettings.startDestination"
 const val APPEARANCE_SETTINGS_ANSWER_DOUBLE_TAP_TAG = "appearanceSettings.answerDoubleTap"
+const val APPEARANCE_SETTINGS_ANSWER_SWITCH_SENSITIVITY_TAG = "appearanceSettings.answerSwitchSensitivity"
 const val APPEARANCE_SETTINGS_USE_WEBVIEW_TAG = "appearanceSettings.useWebView"
 const val APPEARANCE_SETTINGS_WEBVIEW_FONT_TAG = "appearanceSettings.webViewFont"
 const val APPEARANCE_SETTINGS_WEBVIEW_OPTIONS_TAG = "appearanceSettings.webViewOptions"
 const val APPEARANCE_SETTINGS_BOTTOM_BAR_SECTION_KEY = "appearanceSettings.bottomBarSection"
-
-fun appearanceSettingsStartDestinationOptionTag(key: String): String =
-    "appearanceSettings.startDestinationOption.$key"
-
-fun appearanceSettingsBottomBarItemTag(key: String): String =
-    "appearanceSettings.bottomBarItem.$key"
-
-fun appearanceSettingsBottomBarMoveUpTag(key: String): String =
-    "appearanceSettings.bottomBarItem.$key.moveUp"
-
-fun appearanceSettingsBottomBarMoveDownTag(key: String): String =
-    "appearanceSettings.bottomBarItem.$key.moveDown"
 
 const val START_DESTINATION_PREFERENCE_KEY = "startDestination"
 const val BOTTOM_BAR_ITEMS_PREFERENCE_KEY = "bottom_bar_items"
@@ -574,6 +570,28 @@ fun AppearanceSettingsScreen(
                         )
                     },
                 )
+
+                var blockSpacing by remember { mutableIntStateOf(settings.getInt(PREF_BLOCK_SPACING, 100)) }
+                SettingItem(
+                    title = { Text("段间距") },
+                    description = { Text("调整正文段落和块级内容间距 ($blockSpacing%)") },
+                    settingKey = PREF_BLOCK_SPACING,
+                    highlightedKey = settingKey,
+                    bringIntoViewRequester = requesterFor(PREF_BLOCK_SPACING),
+                    bottomAction = {
+                        Slider(
+                            value = blockSpacing.toFloat(),
+                            onValueChange = {
+                                val spacing = (it / 10).roundToInt() * 10
+                                blockSpacing = spacing
+                                settings.putInt(PREF_BLOCK_SPACING, spacing)
+                            },
+                            valueRange = 0f..300f,
+                            steps = 29,
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        )
+                    },
+                )
             }
 
             // ── 信息流 ──────────────────────────────────────────────────────────
@@ -821,6 +839,44 @@ fun AppearanceSettingsScreen(
                     },
                 )
 
+                var answerSwitchSensitivity by remember {
+                    mutableStateOf(
+                        normalizedAnswerSwitchSensitivity(
+                            settings.getFloat(
+                                ANSWER_SWITCH_SENSITIVITY_PREFERENCE_KEY,
+                                DEFAULT_ANSWER_SWITCH_SENSITIVITY,
+                            ),
+                        ),
+                    )
+                }
+                AnimatedVisibility(answerSwitchMode.value != "off") {
+                    SettingItem(
+                        title = { Text("回答切换灵敏度") },
+                        description = {
+                            Text("当前 ${(answerSwitchSensitivity * 10).roundToInt() / 10f}x，数值越高，滑动越短；同时作用于上下和左右切换。")
+                        },
+                        settingKey = ANSWER_SWITCH_SENSITIVITY_PREFERENCE_KEY,
+                        highlightedKey = settingKey,
+                        bringIntoViewRequester = requesterFor(ANSWER_SWITCH_SENSITIVITY_PREFERENCE_KEY),
+                        bottomAction = {
+                            Slider(
+                                value = answerSwitchSensitivity,
+                                onValueChange = {
+                                    val sensitivity = (it * 10).roundToInt() / 10f
+                                    answerSwitchSensitivity = sensitivity
+                                    settings.putFloat(ANSWER_SWITCH_SENSITIVITY_PREFERENCE_KEY, sensitivity)
+                                },
+                                valueRange = MIN_ANSWER_SWITCH_SENSITIVITY..MAX_ANSWER_SWITCH_SENSITIVITY,
+                                steps = 24,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp)
+                                    .testTag(APPEARANCE_SETTINGS_ANSWER_SWITCH_SENSITIVITY_TAG),
+                            )
+                        },
+                    )
+                }
+
                 var answerDoubleTapExpanded by remember { mutableStateOf(false) }
                 val answerDoubleTapAction = remember {
                     mutableStateOf(
@@ -978,7 +1034,7 @@ fun AppearanceSettingsScreen(
                             ) {
                                 startDestinationItems.forEach { (key, label) ->
                                     DropdownMenuItem(
-                                        modifier = Modifier.testTag(appearanceSettingsStartDestinationOptionTag(key)),
+                                        modifier = Modifier.testTag("appearanceSettings:startDestination:option:$key"),
                                         text = { Text(label) },
                                         onClick = {
                                             startDestinationKey = key
@@ -1029,7 +1085,7 @@ fun AppearanceSettingsScreen(
                                             fadeInSpec = spring(stiffness = Spring.StiffnessMediumLow),
                                             fadeOutSpec = spring(stiffness = Spring.StiffnessMediumLow),
                                             placementSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                                        ).testTag(appearanceSettingsBottomBarItemTag(key))
+                                        ).testTag("appearanceSettings:bottomBar:item:$key")
                                         .fillMaxWidth()
                                         .height(bottomBarSettingItemHeight)
                                         .clickable(enabled = isEnabled) {
@@ -1076,14 +1132,14 @@ fun AppearanceSettingsScreen(
                                             IconButton(
                                                 onClick = { moveBottomBarItem(key, -1) },
                                                 enabled = selectedIndex > 0,
-                                                modifier = Modifier.testTag(appearanceSettingsBottomBarMoveUpTag(key)),
+                                                modifier = Modifier.testTag("appearanceSettings:bottomBar:moveUp:$key"),
                                             ) {
                                                 Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "上移$label")
                                             }
                                             IconButton(
                                                 onClick = { moveBottomBarItem(key, 1) },
                                                 enabled = selectedIndex in 0 until selectedBottomBarItemKeys.value.lastIndex,
-                                                modifier = Modifier.testTag(appearanceSettingsBottomBarMoveDownTag(key)),
+                                                modifier = Modifier.testTag("appearanceSettings:bottomBar:moveDown:$key"),
                                             ) {
                                                 Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "下移$label")
                                             }

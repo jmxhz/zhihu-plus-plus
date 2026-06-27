@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -29,7 +29,6 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
-import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
@@ -38,12 +37,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import com.github.zly2006.zhihu.data.AccountData
-import com.github.zly2006.zhihu.data.ContentDetailCache
 import com.github.zly2006.zhihu.data.HistoryStorage
-import com.github.zly2006.zhihu.data.getContentDetail
-import com.github.zly2006.zhihu.data.getOrFetch
-import com.github.zly2006.zhihu.navigation.AndroidAnswerNavigatorRepository
-import com.github.zly2006.zhihu.navigation.AnswerNavigatorRepository
 import com.github.zly2006.zhihu.navigation.NavDestination
 import com.github.zly2006.zhihu.shared.aigc.AIGC_MARKING_ENABLED_PREFERENCE_KEY
 import com.github.zly2006.zhihu.shared.aigc.AigcVoteClient
@@ -51,15 +45,10 @@ import com.github.zly2006.zhihu.shared.aigc.AigcVoteVoter
 import com.github.zly2006.zhihu.shared.data.DataHolder
 import com.github.zly2006.zhihu.shared.data.Feed
 import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
-import com.github.zly2006.zhihu.shared.data.ZHIHU_CLEAR_ONLINE_HISTORY_URL
-import com.github.zly2006.zhihu.shared.data.ZHIHU_LAST_READ_TOUCH_URL
+import com.github.zly2006.zhihu.shared.data.ZhihuCookieStorage
 import com.github.zly2006.zhihu.shared.data.ZhihuJson.json
-import com.github.zly2006.zhihu.shared.data.buildZhihuClearOnlineHistoryBody
-import com.github.zly2006.zhihu.shared.data.decodeOnlineHistoryPage
-import com.github.zly2006.zhihu.shared.data.encodeZhihuLastReadTouchItems
 import com.github.zly2006.zhihu.shared.data.navDestination
-import com.github.zly2006.zhihu.shared.data.zhihuLastReadTouchItem
-import com.github.zly2006.zhihu.shared.data.zhihuLastReadTouchItems
+import com.github.zly2006.zhihu.shared.data.target
 import com.github.zly2006.zhihu.shared.filter.ContentOpenEventSupport
 import com.github.zly2006.zhihu.shared.notification.NotificationSettingsStore
 import com.github.zly2006.zhihu.shared.platform.androidSettingsStore
@@ -72,18 +61,16 @@ import com.github.zly2006.zhihu.util.buildOfflineArticleExportHtml
 import com.github.zly2006.zhihu.util.clipboardManager
 import com.github.zly2006.zhihu.util.exportCollectionItemsToZip
 import com.github.zly2006.zhihu.util.saveBitmapToGallery
-import com.github.zly2006.zhihu.util.signFetchRequest
-import com.github.zly2006.zhihu.viewmodel.CollectionItem
 import com.github.zly2006.zhihu.viewmodel.filter.AndroidContentFilterRuntime
-import com.github.zly2006.zhihu.viewmodel.filter.CLOUD_READ_HISTORY_INCLUDE
-import com.github.zly2006.zhihu.viewmodel.filter.CloudReadHistorySyncer
-import com.github.zly2006.zhihu.viewmodel.filter.ContentDetailProvider
+import com.github.zly2006.zhihu.viewmodel.filter.BlockedKeywordService
+import com.github.zly2006.zhihu.viewmodel.filter.BlockedUser
+import com.github.zly2006.zhihu.viewmodel.filter.ContentFilterManager
+import com.github.zly2006.zhihu.viewmodel.filter.ContentType
+import com.github.zly2006.zhihu.viewmodel.filter.FeedContentFilterPipeline
+import com.github.zly2006.zhihu.viewmodel.filter.FeedDisplayFilterPipeline
+import com.github.zly2006.zhihu.viewmodel.filter.ForegroundReadFilterPipeline
 import com.github.zly2006.zhihu.viewmodel.filter.contentFilterSettings
-import com.github.zly2006.zhihu.viewmodel.filter.createBlocklistManager
-import com.github.zly2006.zhihu.viewmodel.filter.filterFeedDisplayItems
-import com.github.zly2006.zhihu.viewmodel.filter.filterForegroundReadItems
 import com.github.zly2006.zhihu.viewmodel.filter.getContentFilterDatabase
-import com.github.zly2006.zhihu.viewmodel.filter.recordFeedContentInteraction
 import com.github.zly2006.zhihu.viewmodel.local.LocalRecommendationEngine
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.UserAgent
@@ -91,24 +78,18 @@ import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.plugins.cache.HttpCache
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.cookies.HttpCookies
-import io.ktor.client.request.forms.MultiPartFormDataContent
-import io.ktor.client.request.forms.formData
-import io.ktor.client.request.header
-import io.ktor.client.request.post
 import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
-import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.util.appendAll
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.io.File
 import java.util.UUID
 import com.github.zly2006.zhihu.navigation.Article as ArticleDestination
@@ -137,21 +118,6 @@ open class SharedAndroidPaginationEnvironment(
     private val localRecommendationEngine by lazy { LocalRecommendationEngine(context) }
     private val settingsStore by lazy { androidSettingsStore(context) }
     private val userMessageSink by lazy { androidUserMessageSink(context) }
-    private val cloudReadHistorySyncScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val cloudReadHistorySyncer by lazy {
-        val database = getContentFilterDatabase(context)
-        CloudReadHistorySyncer(
-            database = database,
-            fetchPage = { url ->
-                val json = fetchJson(url, CLOUD_READ_HISTORY_INCLUDE)
-                    ?: error("Empty online history response")
-                decodeOnlineHistoryPage(json)
-            },
-            onFailure = { error ->
-                Log.w("CloudReadHistorySyncer", "Failed to sync cloud read history", error)
-            },
-        )
-    }
     private val aigcVoteHttpClient by lazy {
         HttpClient {
             install(ContentNegotiation) {
@@ -166,7 +132,6 @@ open class SharedAndroidPaginationEnvironment(
             clientId = aigcVoteClientId(),
         )
     }
-    private var lastAuthRefreshMillis = 0L
 
     override fun httpClient(): HttpClient {
         val loginForRecommendation = settingsStore.getBoolean("loginForRecommendation", true)
@@ -197,7 +162,9 @@ open class SharedAndroidPaginationEnvironment(
             install(ZHIHU_PP_ANDROID_HEADERS)
             if (loginForRecommendation) {
                 install(HttpCookies) {
-                    storage = AccountData.cookieStorage(context, null)
+                    storage = ZhihuCookieStorage(AccountData.data.cookies) {
+                        AccountData.saveData(context, AccountData.data)
+                    }
                 }
             }
         }
@@ -227,12 +194,6 @@ open class SharedAndroidPaginationEnvironment(
         } else {
             AccountData.data.cookies
         }
-    }
-
-    override fun lastAuthRefreshMillis(): Long = lastAuthRefreshMillis
-
-    override fun updateLastAuthRefreshMillis(value: Long) {
-        lastAuthRefreshMillis = value
     }
 
     private fun aigcVoteServerUrl(): String =
@@ -280,32 +241,21 @@ open class SharedAndroidPaginationEnvironment(
 
     override fun localHistory(): List<NavDestination> = HistoryStorage(context).history
 
-    override suspend fun homeFeedReadContentKeys(): Set<String> =
-        ContentOpenEventSupport.trackedContentKeysFromDestinations(localHistory())
-
-    override fun scheduleCloudReadHistorySync() {
-        cloudReadHistorySyncer.startSyncIfNeeded(cloudReadHistorySyncScope)
-    }
-
-    override suspend fun addReadHistory(
-        contentToken: String,
-        contentTypeName: String,
-    ) {
-        AccountData.addReadHistory(context, contentToken, contentTypeName)
-    }
-
     override suspend fun postHistoryDestination(destination: NavDestination) {
         HistoryStorage(context).add(destination)
     }
 
     override suspend fun isUserBlocked(userId: String): Boolean =
-        getContentFilterDatabase(context).createBlocklistManager().isUserBlocked(userId)
+        getContentFilterDatabase(context).let { database ->
+            database.blockedUserDao().isUserBlocked(userId)
+        }
 
     override fun blockedUserIds(): Set<String> =
         kotlinx.coroutines.runBlocking {
-            getContentFilterDatabase(context)
-                .createBlocklistManager()
-                .getAllBlockedUsers()
+            val database = getContentFilterDatabase(context)
+            database
+                .blockedUserDao()
+                .getAllUsers()
                 .map { it.userId }
                 .toSet()
         }
@@ -316,16 +266,20 @@ open class SharedAndroidPaginationEnvironment(
         urlToken: String?,
         avatarUrl: String?,
     ) {
-        getContentFilterDatabase(context).createBlocklistManager().addBlockedUser(
-            userId = userId,
-            userName = userName,
-            urlToken = urlToken,
-            avatarUrl = avatarUrl,
+        val database = getContentFilterDatabase(context)
+        database.blockedUserDao().insertUser(
+            BlockedUser(
+                userId = userId,
+                userName = userName,
+                urlToken = urlToken,
+                avatarUrl = avatarUrl,
+            ),
         )
     }
 
     override suspend fun removeBlockedUser(userId: String) {
-        getContentFilterDatabase(context).createBlocklistManager().removeBlockedUser(userId)
+        val database = getContentFilterDatabase(context)
+        database.blockedUserDao().deleteUserById(userId)
     }
 
     override suspend fun recordContentOpenEvent(
@@ -344,54 +298,51 @@ open class SharedAndroidPaginationEnvironment(
         )
     }
 
-    override suspend fun getContentDetail(article: ArticleDestination): DataHolder.Content? =
-        DataHolder.getContentDetail(context, article)
-
-    override suspend fun followQuestion(
-        questionId: Long,
-        follow: Boolean,
+    override suspend fun recordOpenEvent(
+        destination: ArticleDestination,
+        questionId: Long?,
     ) {
-        val url = "https://www.zhihu.com/api/v4/questions/$questionId/followers"
-        AccountData.fetch(context, url) {
-            signFetchRequest()
-            method = if (follow) HttpMethod.Post else HttpMethod.Delete
-        }
+        recordContentOpenEvent(destination, questionId)
     }
 
     override suspend fun applyHomeFeedFilters(items: List<FeedDisplayItem>): HomeFeedFilterResult {
         val settings = feedDisplaySettings()
         val filterSettings = context.contentFilterSettings()
         val filterDatabase = getContentFilterDatabase(context)
-        val readContentKeys = if (filterSettings.reverseBlock || !filterSettings.enableContentFilter) {
-            emptySet()
-        } else {
-            scheduleCloudReadHistorySync()
-            homeFeedReadContentKeys()
-        }
-        val foregroundItems = filterDatabase.filterForegroundReadItems(
+        val foregroundItems = ForegroundReadFilterPipeline(
             settings = filterSettings,
-            items = items,
-            extraReadContentKeys = readContentKeys,
-        )
-        val filteredItems = filterDatabase.filterFeedDisplayItems(
+            contentFilterManager = ContentFilterManager(filterDatabase.contentFilterDao()),
+            blockedFeedRecordDao = filterDatabase.blockedFeedRecordDao(),
+        ).filter(items)
+        val filteredItems = FeedDisplayFilterPipeline(
             settings = filterSettings,
-            items = foregroundItems,
-            contentDetailProvider = ContentDetailProvider { ContentDetailCache.getOrFetch(context, it) },
-            semanticMatcher = AndroidContentFilterRuntime.semanticMatcher,
-            onNlpBlocked = { blockedThisRound ->
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    context.mainExecutor.execute {
-                        userMessageSink.showShortMessage("NLP 已屏蔽 ${blockedThisRound.first().title.take(10)}... 等 ${blockedThisRound.size} 条内容")
+            contentDetailProvider = this::getOrFetchContentDetail,
+            contentFilterPipeline = FeedContentFilterPipeline(
+                settings = filterSettings,
+                blockedKeywordDao = filterDatabase.blockedKeywordDao(),
+                blockedUserDao = filterDatabase.blockedUserDao(),
+                blockedTopicDao = filterDatabase.blockedTopicDao(),
+                blockedKeywordService = BlockedKeywordService(
+                    keywordDao = filterDatabase.blockedKeywordDao(),
+                    recordDao = filterDatabase.blockedContentRecordDao(),
+                    semanticMatcher = AndroidContentFilterRuntime.semanticMatcher,
+                ),
+                onNlpBlocked = { blockedThisRound ->
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        context.mainExecutor.execute {
+                            userMessageSink.showShortMessage("NLP 已屏蔽 ${blockedThisRound.first().title.take(10)}... 等 ${blockedThisRound.size} 条内容")
+                        }
                     }
-                }
-            },
+                },
+            ),
+            blockedFeedRecordDao = filterDatabase.blockedFeedRecordDao(),
             onDetailFetchFailed = { item ->
                 Log.w("ContentFilterExtensions", "Failed to fetch content details for item '${item.title}'. Using dummy content for filtering.")
             },
             onDetailsKeywordFiltered = { item, keyword ->
                 Log.e("ContentFilterExtensions", "Filtered item '${item.title}' due to keyword '$keyword' in details: ${item.content}")
             },
-        )
+        ).filter(foregroundItems)
         return HomeFeedFilterResult(
             foregroundItems = foregroundItems,
             filteredItems = filteredItems,
@@ -399,56 +350,31 @@ open class SharedAndroidPaginationEnvironment(
         )
     }
 
-    override suspend fun sendFeedReadStatus(feed: Feed) {
-        val payloadItem = zhihuLastReadTouchItem(feed, "read") ?: return
-        AccountData.fetchPost(context, ZHIHU_LAST_READ_TOUCH_URL) {
-            signFetchRequest()
-            header("x-requested-with", "fetch")
-            setBody(
-                MultiPartFormDataContent(
-                    formData {
-                        append("items", encodeZhihuLastReadTouchItems(listOf(payloadItem)))
-                    },
-                ),
-            )
-        }
-    }
-
     override suspend fun recordContentInteraction(feed: Feed) {
         val settings = context.contentFilterSettings()
+        if (!settings.enableContentFilter) return
         val database = getContentFilterDatabase(context)
-        recordFeedContentInteraction(settings, database, feed)
-    }
-
-    override suspend fun markItemsAsTouched(items: Set<Pair<String, String>>): Set<Pair<String, String>> {
-        if (items.isEmpty()) return emptySet()
-        val response = AccountData.httpClient(context).post(ZHIHU_LAST_READ_TOUCH_URL) {
-            header("x-requested-with", "fetch")
-            signFetchRequest()
-            setBody(
-                MultiPartFormDataContent(
-                    formData {
-                        val payload = zhihuLastReadTouchItems(items, "touch")
-                        append("items", encodeZhihuLastReadTouchItems(payload))
-                    },
-                ),
-            )
+        val target = feed.target ?: return
+        val (targetType, targetId) = when (target) {
+            is Feed.AnswerTarget -> ContentType.ANSWER to target.id.toString()
+            is Feed.ArticleTarget -> ContentType.ARTICLE to target.id.toString()
+            is Feed.QuestionTarget -> ContentType.QUESTION to target.id.toString()
+            is Feed.PinTarget -> ContentType.PIN to target.id.toString()
+            else -> return
         }
-        return if (response.status.isSuccess()) {
-            items
-        } else {
-            Log.e("Browse-Touch", response.bodyAsText())
-            emptySet()
-        }
+        ContentFilterManager(database.contentFilterDao()).recordContentInteraction(targetType, targetId)
     }
 
     override suspend fun clearAllHistory() {
         HistoryStorage(context).clearAndSave()
-        cloudReadHistorySyncer.clearCache()
-        AccountData.fetchPost(context, ZHIHU_CLEAR_ONLINE_HISTORY_URL) {
-            signFetchRequest()
+        postSigned("https://api.zhihu.com/read_history/batch_del") {
             contentType(KtorContentType.Application.Json)
-            setBody(buildZhihuClearOnlineHistoryBody())
+            setBody(
+                buildJsonObject {
+                    put("pairs", JsonArray(emptyList()))
+                    put("clear", true)
+                }.toString(),
+            )
         }
     }
 
@@ -468,8 +394,6 @@ open class SharedAndroidPaginationEnvironment(
                 .show()
         }
     }
-
-    override fun answerNavigatorRepository(): AnswerNavigatorRepository = AndroidAnswerNavigatorRepository(context)
 
     override fun articleAnswerSwitchState() = context.articleHost()?.articleAnswerSwitchState
 
@@ -536,7 +460,7 @@ open class SharedAndroidPaginationEnvironment(
         includeImages: Boolean,
     ): ResolvedCollectionHtmlExportItem? {
         val navDestination = item.content.navDestination as? ArticleDestination ?: return null
-        val content = ContentDetailCache.getOrFetch(context, navDestination)
+        val content = getOrFetchContentDetail(navDestination)
             ?: throw IllegalStateException("无法加载「${item.content.title}」详情")
         if (content !is DataHolder.Answer && content !is DataHolder.Article) {
             return null
@@ -646,47 +570,34 @@ open class SharedAndroidPaginationEnvironment(
     override fun saveHtmlToDownloads(
         displayName: String,
         htmlContent: String,
-    ): String = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        saveHtmlToDownloadsWithMediaStore(displayName, htmlContent)
-    } else {
-        saveHtmlToLegacyDownloads(displayName, htmlContent)
-    }
-
-    @RequiresApi(Build.VERSION_CODES.Q)
-    private fun saveHtmlToDownloadsWithMediaStore(
-        displayName: String,
-        htmlContent: String,
     ): String {
-        val resolver = context.contentResolver
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-            put(MediaStore.MediaColumns.MIME_TYPE, "text/html")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Zhihu++")
-            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "text/html")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Zhihu++")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                ?: throw IllegalStateException("无法创建下载文件")
+
+            return try {
+                resolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
+                    writer.write(htmlContent)
+                } ?: throw IllegalStateException("无法打开下载文件")
+
+                contentValues.clear()
+                contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                resolver.update(uri, contentValues, null, null)
+                "Zhihu++/$displayName"
+            } catch (e: Exception) {
+                resolver.delete(uri, null, null)
+                throw e
+            }
         }
-        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-            ?: throw IllegalStateException("无法创建下载文件")
 
-        return try {
-            resolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
-                writer.write(htmlContent)
-            } ?: throw IllegalStateException("无法打开下载文件")
-
-            contentValues.clear()
-            contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
-            resolver.update(uri, contentValues, null, null)
-            "Zhihu++/$displayName"
-        } catch (e: Exception) {
-            resolver.delete(uri, null, null)
-            throw e
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun saveHtmlToLegacyDownloads(
-        displayName: String,
-        htmlContent: String,
-    ): String {
+        @Suppress("DEPRECATION")
         val downloadsDir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
             "Zhihu++",
@@ -694,7 +605,6 @@ open class SharedAndroidPaginationEnvironment(
         if (!downloadsDir.exists() && !downloadsDir.mkdirs()) {
             throw IllegalStateException("无法创建下载目录")
         }
-
         val file = File(downloadsDir, displayName)
         file.writeText(htmlContent)
         return file.absolutePath

@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -129,6 +129,8 @@ import com.github.zly2006.zhihu.navigation.resolveContent
 import com.github.zly2006.zhihu.shared.platform.PlatformBackHandler
 import com.github.zly2006.zhihu.shared.platform.rememberExternalUrlOpener
 import com.github.zly2006.zhihu.shared.platform.rememberImagePreviewOpener
+import com.github.zly2006.zhihu.shared.platform.rememberImageSaver
+import com.github.zly2006.zhihu.shared.platform.rememberImageSharer
 import com.github.zly2006.zhihu.shared.util.twoDigitString
 import com.github.zly2006.zhihu.shared.viewmodel.CommentItem
 import com.github.zly2006.zhihu.viewmodel.comment.BaseCommentViewModel
@@ -137,15 +139,16 @@ import com.github.zly2006.zhihu.viewmodel.comment.CommentSortOrder
 import com.github.zly2006.zhihu.viewmodel.comment.RootCommentViewModel
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
 import kotlinx.coroutines.launch
-import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.number
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.time.Clock
+import kotlin.time.Instant
 
 typealias CommentModel = CommentItem
 
@@ -161,24 +164,6 @@ const val COMMENT_IMAGE_MENU_BROWSER_TAG = "comment_image_menu_browser"
 const val COMMENT_IMAGE_MENU_SAVE_TAG = "comment_image_menu_save"
 const val COMMENT_IMAGE_MENU_SHARE_TAG = "comment_image_menu_share"
 
-fun commentRowTag(commentId: String) = "comment_row_$commentId"
-
-fun commentAuthorTag(commentId: String) = "comment_author_$commentId"
-
-fun commentReplyToAuthorTag(commentId: String) = "comment_reply_to_author_$commentId"
-
-fun commentReplyButtonTag(commentId: String) = "comment_reply_button_$commentId"
-
-fun commentReplyCountTag(commentId: String) = "comment_reply_count_$commentId"
-
-fun commentLikeButtonTag(commentId: String) = "comment_like_button_$commentId"
-
-fun commentLikeCountTag(commentId: String) = "comment_like_count_$commentId"
-
-fun commentChildButtonTag(commentId: String) = "comment_child_button_$commentId"
-
-fun commentImageTag(commentId: String) = "comment_image_$commentId"
-
 enum class CommentImageMenuAction {
     Open,
     OpenInBrowser,
@@ -188,7 +173,6 @@ enum class CommentImageMenuAction {
 
 data class CommentScreenTestOverrides(
     val viewModel: BaseCommentViewModel? = null,
-    val skipInitialLoad: Boolean = false,
     val onArchiveComment: ((CommentModel) -> Unit)? = null,
     val onImageMenuAction: ((CommentImageMenuAction, String) -> Unit)? = null,
 )
@@ -337,7 +321,6 @@ fun SwipeToReplyContainer(
 @Composable
 private fun ClickableImageWithMenu(
     imageUrl: String,
-    runtime: CommentScreenRuntime,
     modifier: Modifier = Modifier,
     contentDescription: String = "图片",
     onAction: ((CommentImageMenuAction, String) -> Unit)? = null,
@@ -345,6 +328,8 @@ private fun ClickableImageWithMenu(
     var showContextMenu by remember { mutableStateOf(false) }
     val openImagePreview = rememberImagePreviewOpener()
     val openExternalUrl = rememberExternalUrlOpener()
+    val saveImage = rememberImageSaver()
+    val shareImage = rememberImageSharer()
 
     PlatformBackHandler(enabled = showContextMenu) {
         showContextMenu = false
@@ -358,8 +343,8 @@ private fun ClickableImageWithMenu(
         when (action) {
             CommentImageMenuAction.Open -> openImagePreview(imageUrl)
             CommentImageMenuAction.OpenInBrowser -> openExternalUrl(imageUrl)
-            CommentImageMenuAction.Save -> runtime.saveImage(imageUrl)
-            CommentImageMenuAction.Share -> runtime.shareImage(imageUrl)
+            CommentImageMenuAction.Save -> saveImage(imageUrl)
+            CommentImageMenuAction.Share -> shareImage(imageUrl)
         }
     }
 
@@ -431,7 +416,6 @@ fun CommentScreen(
     testOverrides: CommentScreenTestOverrides? = null,
 ) {
     val paginationEnvironment = rememberPaginationEnvironment(allowGuestAccess = false)
-    val runtime = rememberCommentScreenRuntime()
     var commentInput by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
     var replyToComment by remember { mutableStateOf<CommentModel?>(null) }
@@ -477,11 +461,11 @@ fun CommentScreen(
     }
 
     // 初始加载评论
-    LaunchedEffect(resolvedContent, testOverrides?.skipInitialLoad) {
+    LaunchedEffect(resolvedContent) {
         if (viewModel.article != resolvedContent) {
             error("Internal Error: Detected content mismatch")
         }
-        if (!(testOverrides?.skipInitialLoad ?: false) && viewModel.errorMessage == null) {
+        if (viewModel.errorMessage == null) {
             viewModel.loadMore(paginationEnvironment)
         }
     }
@@ -561,7 +545,6 @@ fun CommentScreen(
                                 Column(modifier = modifier) {
                                     CommentItem(
                                         comment = commentItem,
-                                        runtime = runtime,
                                         isLiked = isLiked,
                                         likeCount = likeCount,
                                         isLikeLoading = isLikeLoading,
@@ -598,8 +581,7 @@ fun CommentScreen(
                                                     )
                                                     CommentItem(
                                                         comment = childCommentItem,
-                                                        runtime = runtime,
-                                                        modifier = Modifier.testTag(commentRowTag(childComment.id)),
+                                                        modifier = Modifier.testTag("comment_row_${childComment.id}"),
                                                         isLiked = liked,
                                                         likeCount = likeCount,
                                                         toggleLike = {
@@ -623,7 +605,7 @@ fun CommentScreen(
                                                 onClick = { onChildCommentClick(commentItem) },
                                                 modifier = Modifier
                                                     .height(28.dp)
-                                                    .testTag(commentChildButtonTag(commentItem.item.id)),
+                                                    .testTag("comment_child_button_${commentItem.item.id}"),
                                                 shape = RoundedCornerShape(50),
                                                 colors = ButtonDefaults.buttonColors(
                                                     containerColor = actionChipColor,
@@ -754,7 +736,7 @@ fun CommentScreen(
                                 ) { dto ->
                                     val commentItem = viewModel.createCommentItem(dto, article = rootContent)
                                     SwipeToReplyContainer(
-                                        modifier = Modifier.testTag(commentRowTag(dto.id)),
+                                        modifier = Modifier.testTag("comment_row_${dto.id}"),
                                         onArchive = testOverrides?.onArchiveComment?.let { onArchive ->
                                             {
                                                 onArchive(commentItem)
@@ -947,7 +929,6 @@ private fun commentViewModelKey(content: NavDestination): String = when (content
 @Composable
 private fun CommentItem(
     comment: CommentModel,
-    runtime: CommentScreenRuntime,
     modifier: Modifier = Modifier,
     isLiked: Boolean = false,
     likeCount: Int = 0,
@@ -987,7 +968,7 @@ private fun CommentItem(
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
                         modifier = Modifier
-                            .testTag(commentAuthorTag(commentData.id))
+                            .testTag("comment_author_${commentData.id}")
                             .clickable {
                                 navigator.onNavigate(
                                     Person(
@@ -1024,7 +1005,7 @@ private fun CommentItem(
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
                             modifier = Modifier
-                                .testTag(commentReplyToAuthorTag(commentData.id))
+                                .testTag("comment_reply_to_author_${commentData.id}")
                                 .clickable {
                                     navigator.onNavigate(
                                         Person(
@@ -1077,9 +1058,8 @@ private fun CommentItem(
                     if (commentImg != null) {
                         ClickableImageWithMenu(
                             imageUrl = commentImg,
-                            runtime = runtime,
                             modifier = Modifier
-                                .testTag(commentImageTag(commentData.id))
+                                .testTag("comment_image_${commentData.id}")
                                 .padding(top = 8.dp)
                                 .sizeIn(maxHeight = 100.dp, maxWidth = 240.dp)
                                 .clip(RoundedCornerShape(12.dp)),
@@ -1129,7 +1109,7 @@ private fun CommentItem(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .testTag(commentReplyButtonTag(commentData.id))
+                    .testTag("comment_reply_button_${commentData.id}")
                     .clickable { onChildCommentClick(comment) },
             ) {
                 Spacer(modifier = Modifier.width(4.dp))
@@ -1148,7 +1128,7 @@ private fun CommentItem(
                 if (comment.item.childCommentCount > 0) {
                     Text(
                         text = comment.item.childCommentCount.toString(),
-                        modifier = Modifier.testTag(commentReplyCountTag(commentData.id)),
+                        modifier = Modifier.testTag("comment_reply_count_${commentData.id}"),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1162,7 +1142,7 @@ private fun CommentItem(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .testTag(commentLikeButtonTag(commentData.id))
+                    .testTag("comment_like_button_${commentData.id}")
                     .clickable(enabled = !isLikeLoading) { toggleLike() },
             ) {
                 Spacer(modifier = Modifier.width(4.dp))
@@ -1183,7 +1163,7 @@ private fun CommentItem(
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = likeCount.toString(),
-                    modifier = Modifier.testTag(commentLikeCountTag(commentData.id)),
+                    modifier = Modifier.testTag("comment_like_count_${commentData.id}"),
                     fontSize = 12.sp,
                     color = if (isLiked) {
                         MaterialTheme.colorScheme.primary
@@ -1203,8 +1183,8 @@ private fun formatCommentTime(createdTimeSeconds: Long): String {
     val now = Clock.System.now().toLocalDateTime(zone)
     return when {
         dateTime.date == now.date -> dateTime.formatHms()
-        dateTime.year == now.year -> "${dateTime.monthNumber.twoDigitString()}-${dateTime.day.twoDigitString()} ${dateTime.formatHms()}"
-        else -> "${dateTime.year}-${dateTime.monthNumber.twoDigitString()}-${dateTime.day.twoDigitString()} ${dateTime.formatHms()}"
+        dateTime.year == now.year -> "${dateTime.month.number.twoDigitString()}-${dateTime.day.twoDigitString()} ${dateTime.formatHms()}"
+        else -> "${dateTime.year}-${dateTime.month.number.twoDigitString()}-${dateTime.day.twoDigitString()} ${dateTime.formatHms()}"
     }
 }
 

@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -157,7 +157,7 @@ class NotificationSettingsScreenInstrumentedTest {
             ToggleCase(
                 title = "打开通知自动已读",
                 group = ToggleGroup.AutoMarkAsRead,
-                defaultValue = true,
+                defaultValue = false,
                 labelOccurrenceCount = 1,
                 labelOccurrenceIndex = 0,
             ),

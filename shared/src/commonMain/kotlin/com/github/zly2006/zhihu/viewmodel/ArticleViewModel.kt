@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -26,9 +26,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.fleeksoft.ksoup.Ksoup
-import com.fleeksoft.ksoup.nodes.Element
-import com.fleeksoft.ksoup.nodes.TextNode
+import com.github.zly2006.zhihu.markdown.htmlToMdAst
+import com.github.zly2006.zhihu.markdown.toMarkdown
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
 import com.github.zly2006.zhihu.navigation.CollectionAnswerNavigator
@@ -82,6 +81,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.datetime.number
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -129,6 +129,12 @@ class ArticleViewModel(
     var updatedAt by mutableLongStateOf(0L)
     var createdAt by mutableLongStateOf(0L)
     var ipInfo by mutableStateOf<String?>(null)
+    var endorsements by mutableStateOf<List<DataHolder.AnswerEndorsementDisplay>>(emptyList())
+    var endorsementTexts: List<String>
+        get() = endorsements.map { endorsement -> endorsement.text }
+        set(value) {
+            endorsements = value.map { text -> DataHolder.AnswerEndorsementDisplay(text = text) }
+        }
     var aiSummaryText by mutableStateOf("")
         private set
     var aiSummaryError by mutableStateOf<String?>(null)
@@ -195,9 +201,13 @@ class ArticleViewModel(
         val createdAt: Long = 0L,
         val updatedAt: Long = 0L,
         val ipInfo: String? = null,
+        val endorsements: List<DataHolder.AnswerEndorsementDisplay> = emptyList(),
         /** 来源标签，用于 UI 显示，例如 "此问题"、"「收藏夹名称」" */
         val sourceLabel: String = "此问题",
-    )
+    ) {
+        val endorsementTexts: List<String>
+            get() = endorsements.map { endorsement -> endorsement.text }
+    }
 
     fun toCachedContent(sourceLabel: String = "此问题"): CachedAnswerContent = CachedAnswerContent(
         article = article,
@@ -212,6 +222,7 @@ class ArticleViewModel(
         createdAt = createdAt,
         updatedAt = updatedAt,
         ipInfo = ipInfo,
+        endorsements = endorsements,
         sourceLabel = sourceLabel,
     )
 
@@ -236,7 +247,7 @@ class ArticleViewModel(
                 try {
                     if (article.type == ArticleType.Answer) {
                         val sharedData = environment.articleAnswerSwitchState()
-                        val answer = environment.getContentDetail(article) as? DataHolder.Answer
+                        val answer = environment.fetchContentDetail(article) as? DataHolder.Answer
                         if (answer != null) {
                             exportSourceContent = answer
                             title = answer.question.title
@@ -267,6 +278,7 @@ class ArticleViewModel(
                             updatedAt = answer.updatedTime
                             createdAt = answer.createdTime
                             ipInfo = answer.ipInfo
+                            endorsements = answer.endorsementItems
 
                             environment.postHistoryDestination(
                                 Article(
@@ -291,7 +303,7 @@ class ArticleViewModel(
                                 if (!isSameQuestion) {
                                     sharedData?.navigator = QuestionAnswerNavigator(
                                         questionId = questionId,
-                                        repository = environment.answerNavigatorRepository()!!,
+                                        environment = environment,
                                     )
                                 }
                             }
@@ -308,11 +320,13 @@ class ArticleViewModel(
                             }
                         } else {
                             content = "<h1>你似乎来到了没有知识存在的荒原</h1>"
+                            endorsements = emptyList()
                             Log.e("ArticleViewModel", "Answer not found")
                         }
                     } else if (article.type == ArticleType.Article) {
-                        val article = environment.getContentDetail(article) as? DataHolder.Article
+                        val article = environment.fetchContentDetail(article) as? DataHolder.Article
                         if (article != null) {
+                            endorsements = emptyList()
                             exportSourceContent = article
                             title = article.title
                             content = applySegmentInfosToHtml(
@@ -885,7 +899,13 @@ class ArticleViewModel(
         }
 
         try {
-            val htmlContent = createOfflineHtmlContent(environment, includeAppAttribution)
+            val htmlContent = withContext(Dispatchers.Default) {
+                environment.buildOfflineArticleExportHtml(
+                    content = requireExportSourceContent(),
+                    includeAppAttribution = includeAppAttribution,
+                    httpClient = httpClient ?: environment.httpClient(),
+                )
+            }
             val savedLocation = withContext(Dispatchers.Default) {
                 environment.saveHtmlToDownloads(
                     displayName = buildArticleExportFileName(
@@ -1005,17 +1025,6 @@ class ArticleViewModel(
         )
     }
 
-    private suspend fun createOfflineHtmlContent(
-        environment: ArticleExportContentEnvironment,
-        includeAppAttribution: Boolean,
-    ): String = withContext(Dispatchers.Default) {
-        environment.buildOfflineArticleExportHtml(
-            content = requireExportSourceContent(),
-            includeAppAttribution = includeAppAttribution,
-            httpClient = httpClient ?: environment.accountHttpClient(),
-        )
-    }
-
     private suspend fun fetchExportComments(
         environment: ArticleExportContentEnvironment,
         requestedCount: Int,
@@ -1044,155 +1053,18 @@ class ArticleViewModel(
     private fun requireExportSourceContent(): DataHolder.Content = exportSourceContent
         ?: throw IllegalStateException("内容未加载完成")
 
-    // 转换为Markdown格式
     fun convertToMarkdown(): String {
         val sb = StringBuilder()
 
-        // 标题
         sb.append("# $title\n\n")
 
-        // 作者信息
         sb.append("**作者**: $authorName\n\n")
         if (authorBio.isNotEmpty()) {
             sb.append("**简介**: $authorBio\n\n")
         }
 
-        // 分隔线
         sb.append("---\n\n")
-
-        // 内容 - 解析 HTML 并转换为 Markdown
-        val document = Ksoup.parse(content)
-        sb.append(htmlToMarkdown(document.body()))
-
-        return sb.toString()
-    }
-
-    // HTML 转 Markdown 的递归函数
-    private fun htmlToMarkdown(element: Element): String {
-        val sb = StringBuilder()
-
-        for (node in element.childNodes()) {
-            when (node) {
-                is Element -> {
-                    when (node.tagName().lowercase()) {
-                        "h1" -> sb.append("# ${node.text()}\n\n")
-                        "h2" -> sb.append("## ${node.text()}\n\n")
-                        "h3" -> sb.append("### ${node.text()}\n\n")
-                        "h4" -> sb.append("#### ${node.text()}\n\n")
-                        "h5" -> sb.append("##### ${node.text()}\n\n")
-                        "h6" -> sb.append("###### ${node.text()}\n\n")
-                        "p" -> sb.append("${htmlToMarkdown(node)}\n\n")
-                        "br" -> sb.append("\n")
-                        "strong", "b" -> sb.append("**${node.text()}**")
-                        "em", "i" -> sb.append("*${node.text()}*")
-                        "u" -> sb.append("_${node.text()}_")
-                        "code" -> sb.append("`${node.text()}`")
-                        "pre" -> sb.append("```\n${node.text()}\n```\n\n")
-                        "blockquote" -> {
-                            val lines = htmlToMarkdown(node).trim().split("\n")
-                            for (line in lines) {
-                                sb.append("> $line\n")
-                            }
-                            sb.append("\n")
-                        }
-                        "ul", "ol" -> {
-                            val items = node.select("li")
-                            items.forEachIndexed { index, item ->
-                                val prefix = if (node.tagName() == "ul") "- " else "${index + 1}. "
-                                sb.append("$prefix${htmlToMarkdown(item).trim()}\n")
-                            }
-                            sb.append("\n")
-                        }
-                        "li" -> sb.append(htmlToMarkdown(node))
-                        "a" -> {
-                            val href = node.attr("href")
-                            val text = node.text()
-                            if (href.isNotEmpty()) {
-                                sb.append("[$text]($href)")
-                            } else {
-                                sb.append(text)
-                            }
-                        }
-                        "img" -> {
-                            val src = node.attr("src").ifEmpty { node.attr("data-actualsrc") }
-                            val alt = node.attr("alt").ifEmpty { "image" }
-                            if (src.isNotEmpty()) {
-                                sb.append("![$alt]($src)\n\n")
-                            }
-                        }
-                        "figure" -> {
-                            // 知乎的图片通常在 figure 标签中
-                            val img = node.selectFirst("img")
-                            if (img != null) {
-                                val src = img.attr("src").ifEmpty { img.attr("data-actualsrc") }
-                                val alt = img.attr("alt").ifEmpty { "image" }
-                                if (src.isNotEmpty()) {
-                                    sb.append("![$alt]($src)\n\n")
-                                }
-                            } else {
-                                sb.append(htmlToMarkdown(node))
-                            }
-                        }
-                        "hr" -> sb.append("---\n\n")
-                        "table" -> {
-                            // 简单的表格处理
-                            val rows = node.select("tr")
-                            if (rows.isNotEmpty()) {
-                                // 表头
-                                val headerCells = rows[0].select("th, td")
-                                if (headerCells.isNotEmpty()) {
-                                    sb.append("| ")
-                                    headerCells.forEach { cell ->
-                                        sb.append("${cell.text()} | ")
-                                    }
-                                    sb.append("\n")
-                                    // 分隔线
-                                    sb.append("| ")
-                                    headerCells.forEach { _ ->
-                                        sb.append("--- | ")
-                                    }
-                                    sb.append("\n")
-                                }
-                                // 表格内容
-                                for (i in 1 until rows.size) {
-                                    val cells = rows[i].select("td")
-                                    if (cells.isNotEmpty()) {
-                                        sb.append("| ")
-                                        cells.forEach { cell ->
-                                            sb.append("${cell.text()} | ")
-                                        }
-                                        sb.append("\n")
-                                    }
-                                }
-                                sb.append("\n")
-                            }
-                        }
-                        "div", "span" -> {
-                            // 检查是否是知乎的特殊标签
-                            val className = node.attr("class")
-                            if (className.contains("highlight")) {
-                                // 代码块
-                                val code = node.selectFirst("code")
-                                if (code != null) {
-                                    sb.append("```\n${code.text()}\n```\n\n")
-                                } else {
-                                    sb.append(htmlToMarkdown(node))
-                                }
-                            } else {
-                                sb.append(htmlToMarkdown(node))
-                            }
-                        }
-                        else -> sb.append(htmlToMarkdown(node))
-                    }
-                }
-                is TextNode -> {
-                    val text = node.text()
-                    if (text.isNotBlank()) {
-                        sb.append(text)
-                    }
-                }
-            }
-        }
+        sb.append(htmlToMdAst(content, noNativeBlock = true).toMarkdown())
 
         return sb.toString()
     }
@@ -1209,12 +1081,12 @@ class ArticleViewModel(
 }
 
 fun formatArticleDateTime(seconds: Long): String {
-    val instant = kotlinx.datetime.Instant.fromEpochSeconds(seconds)
+    val instant = kotlin.time.Instant.fromEpochSeconds(seconds)
     val dateTime = instant.toLocalDateTime(kotlinx.datetime.TimeZone.currentSystemDefault())
     return buildString {
         append(dateTime.year.toString().padStart(4, '0'))
         append('-')
-        append((dateTime.month.ordinal + 1).twoDigitString())
+        append(dateTime.month.number.twoDigitString())
         append('-')
         append(dateTime.day.twoDigitString())
         append(' ')

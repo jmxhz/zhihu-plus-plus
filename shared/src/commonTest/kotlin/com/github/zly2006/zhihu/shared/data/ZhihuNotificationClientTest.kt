@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -18,16 +18,6 @@
 package com.github.zly2006.zhihu.shared.data
 
 import com.github.zly2006.zhihu.shared.notification.NotificationType
-import com.github.zly2006.zhihu.viewmodel.mergeNotificationsByCreateTime
-import com.github.zly2006.zhihu.viewmodel.shouldReportNotificationFetchFailure
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.engine.mock.respond
-import io.ktor.http.HttpHeaders
-import io.ktor.http.HttpMethod
-import io.ktor.http.HttpStatusCode
-import io.ktor.http.headersOf
-import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
@@ -35,34 +25,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
 class ZhihuNotificationClientTest {
-    @Test
-    fun buildsRecentNotificationUrl() {
-        assertEquals(
-            "https://www.zhihu.com/api/v4/notifications/v2/recent?limit=20",
-            zhihuNotificationRecentUrl(),
-        )
-        assertEquals(
-            "https://www.zhihu.com/api/v4/notifications/v2/recent?limit=50",
-            zhihuNotificationRecentUrl(limit = 50),
-        )
-    }
-
-    @Test
-    fun buildsNotificationCategoryUrls() {
-        assertEquals(
-            "https://www.zhihu.com/api/v4/notifications/v2/default?limit=20",
-            zhihuNotificationDefaultUrl(),
-        )
-        assertEquals(
-            "https://www.zhihu.com/api/v4/notifications/v2/follow?limit=30",
-            zhihuNotificationFollowUrl(limit = 30),
-        )
-        assertEquals(
-            "https://www.zhihu.com/api/v4/notifications/v2/vote_thank?limit=40",
-            zhihuNotificationVoteThankUrl(limit = 40),
-        )
-    }
-
     @Test
     fun inviteAnswerNotificationsKeepOptInDisplayDefault() {
         assertEquals(false, NotificationType.INVITE_ANSWER.defaultValue)
@@ -163,32 +125,6 @@ class ZhihuNotificationClientTest {
     }
 
     @Test
-    fun notificationViewModelSortsMergedCategoryNotificationsByCreateTimeDescending() = runTest {
-        val merged = mergeNotificationsByCreateTime(
-            existing = listOf(
-                notificationItem(id = "default-old", createTime = 100),
-                notificationItem(id = "follow-middle", createTime = 200),
-            ),
-            incoming = listOf(
-                notificationItem(id = "default-new", createTime = 300),
-                notificationItem(id = "vote-latest", createTime = 400),
-            ),
-        )
-
-        assertEquals(
-            listOf("vote-latest", "default-new", "follow-middle", "default-old"),
-            merged.map { it.id },
-        )
-    }
-
-    @Test
-    fun notificationViewModelReportsFailureOnlyWhenEverySourceFails() {
-        assertEquals(false, shouldReportNotificationFetchFailure(successfulSourceCount = 1, failureCount = 1))
-        assertEquals(false, shouldReportNotificationFetchFailure(successfulSourceCount = 1, failureCount = 0))
-        assertEquals(true, shouldReportNotificationFetchFailure(successfulSourceCount = 0, failureCount = 1))
-    }
-
-    @Test
     fun decodesUnreadNotificationCountsFromSnakeCasePayload() {
         val notifications: ZhihuMeNotifications = ZhihuJson.decodeJson(
             buildJsonObject {
@@ -205,89 +141,70 @@ class ZhihuNotificationClientTest {
     }
 
     @Test
-    fun fetchUnreadNotificationCountUsesMeEndpoint() = runTest {
-        val client = HttpClient(
-            MockEngine { request ->
-                assertEquals(ZHIHU_ME_URL, request.url.toString())
-                respond(
-                    content =
-                        """
-                        {
-                          "default_notifications_count": 4,
-                          "follow_notifications_count": 5,
-                          "vote_thank_notifications_count": 6
-                        }
-                        """.trimIndent(),
-                    status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, "application/json"),
-                )
-            },
-        ) {
-            installZhihuCommonClientConfig(
-                cookies = mutableMapOf(),
-                userAgent = "test-agent",
-            )
-        }
+    fun decodesMobileUnreadNotificationCountsFromHeadEntries() {
+        val overview: MobileNotificationMessageOverview = ZhihuJson.decodeJson(
+            ZhihuJson.json.parseToJsonElement(
+                """
+                {
+                  "head": [
+                    {
+                      "type": "entry",
+                      "detail_title": "评论转发@",
+                      "unread_count": 1
+                    },
+                    {
+                      "type": "entry",
+                      "detail_title": "赞同喜欢",
+                      "unread_count": 2
+                    }
+                  ]
+                }
+                """.trimIndent(),
+            ),
+        )
 
-        assertEquals(15, fetchZhihuUnreadNotificationCount(client))
+        assertEquals("评论转发@", overview.head[0].detailTitle)
+        assertEquals(1, overview.head[0].unreadCount)
+        assertEquals("赞同喜欢", overview.head[1].detailTitle)
+        assertEquals(2, overview.head[1].unreadCount)
     }
 
     @Test
-    fun markAllNotificationsAsReadPostsEveryCategoryInOrder() = runTest {
-        val requestedUrls = mutableListOf<String>()
-        val client = HttpClient(
-            MockEngine { request ->
-                assertEquals(HttpMethod.Post, request.method)
-                requestedUrls += request.url.toString()
-                respond(
-                    content = "{}",
-                    status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, "application/json"),
-                )
-            },
-        ) {
-            installZhihuCommonClientConfig(
-                cookies = mutableMapOf(),
-                userAgent = "test-agent",
-            )
-        }
-
-        markAllZhihuNotificationsAsRead(client)
-
-        assertEquals(ZHIHU_NOTIFICATION_READ_ALL_URLS, requestedUrls)
-    }
-
-    private fun notificationItem(
-        id: String,
-        createTime: Long,
-    ): NotificationItem = ZhihuJson.decodeJson(
-        ZhihuJson.json.parseToJsonElement(
-            """
-            {
-              "id": "$id",
-              "type": "notification",
-              "is_read": true,
-              "create_time": $createTime,
-              "content": {
-                "verb": "邀请你回答问题",
-                "actors": [],
-                "target": {
-                  "text": "排序问题 $id",
-                  "link": "https://www.zhihu.com/question/$createTime"
-                },
-                "extend": {
-                  "text": "",
-                  "icon": "https://pic.example/icon.png"
+    fun decodesMobileTimelineNotificationWithTargetSource() {
+        val notification: MobileNotificationTimelineItem = ZhihuJson.decodeJson(
+            ZhihuJson.json.parseToJsonElement(
+                """
+                {
+                  "id": "mobile-notification",
+                  "unique_id": "mobile-notification-unique",
+                  "type": "aggregate_notification",
+                  "card_type": "noti_simple_card",
+                  "is_read": false,
+                  "created": 1781990000,
+                  "head": {
+                    "avatar_url": "https://pic.example/avatar.jpg",
+                    "target_link": "https://www.zhihu.com/people/tester"
+                  },
+                  "content": {
+                    "title": "测试用户 评论了你的回答",
+                    "sub_title": "评论和回复",
+                    "text": "<p>测试评论</p>",
+                    "target_link": "zhihu://comment/list/answer/2?anchor_comment_id=3"
+                  },
+                  "target_source": {
+                    "text": "测试回答标题",
+                    "target_link": "https://www.zhihu.com/question/1/answer/2"
+                  }
                 }
-              },
-              "target": {
-                "type": "question",
-                "url": "https://www.zhihu.com/question/$createTime",
-                "title": "排序问题 $id",
-                "id": "$createTime"
-              }
-            }
-            """.trimIndent(),
-        ),
-    )
+                """.trimIndent(),
+            ),
+        )
+
+        assertEquals("mobile-notification-unique", notification.stableId)
+        assertEquals(false, notification.isRead)
+        assertEquals(1781990000, notification.created)
+        assertEquals("https://pic.example/avatar.jpg", notification.head?.avatarUrl)
+        assertEquals("测试用户 评论了你的回答", notification.content?.title)
+        assertEquals("测试回答标题", notification.targetSource?.text)
+    }
 }

@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -109,6 +109,8 @@ import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.navigation.Search
 import com.github.zly2006.zhihu.navigation.SentenceSimilarityTest
 import com.github.zly2006.zhihu.navigation.TopLevelDestination
+import com.github.zly2006.zhihu.navigation.WriteAnswer
+import com.github.zly2006.zhihu.navigation.WritePin
 import com.github.zly2006.zhihu.shared.filter.ContentOpenFrom
 import com.github.zly2006.zhihu.ui.subscreens.AppearanceSettingsScreen
 import com.github.zly2006.zhihu.ui.subscreens.BlockedFeedHistoryScreen
@@ -450,6 +452,13 @@ fun ZhihuMain(
                     val question: Question = navEntry.toRoute()
                     QuestionScreen(question)
                 }
+                composable<WriteAnswer> { navEntry ->
+                    val args: WriteAnswer = navEntry.toRoute()
+                    WriteAnswerScreen(args)
+                }
+                composable<WritePin> {
+                    WritePinScreen()
+                }
                 composable<Article>(
                     typeMap = mapOf(typeOf<ArticleType>() to ArticleTypeNavType),
                     enterTransition = platformAdapter.articleEnterTransition,
@@ -585,9 +594,19 @@ private fun MainTabsPager(
                 innerPadding = innerPadding,
                 isActive = pagerState.currentPage == pageIndex,
             )
-            MainTabPage.HotListPage -> HotListScreen(innerPadding)
-            MainTabPage.DailyPage -> DailyScreen()
-            MainTabPage.OnlineHistoryPage -> OnlineHistoryScreen()
+            MainTabPage.HotListPage -> HotListScreen(
+                innerPadding = innerPadding,
+                scrollToTopTrigger = scrollToTopTrigger,
+                isActive = pagerState.currentPage == pageIndex,
+            )
+            MainTabPage.DailyPage -> DailyScreen(
+                scrollToTopTrigger = scrollToTopTrigger,
+                isActive = pagerState.currentPage == pageIndex,
+            )
+            MainTabPage.OnlineHistoryPage -> OnlineHistoryScreen(
+                scrollToTopTrigger = scrollToTopTrigger,
+                isActive = pagerState.currentPage == pageIndex,
+            )
             MainTabPage.MyCollectionsPage -> MyCollectionsTopLevelPage()
             MainTabPage.AccountPage -> AccountSettingScreen(innerPadding)
         }
@@ -596,8 +615,7 @@ private fun MainTabsPager(
 
 @Composable
 private fun MyCollectionsTopLevelPage() {
-    val runtime = rememberAccountSettingsPlatformRuntime()
-    val account = runtime.accountState.value
+    val account = rememberAccountSettingsAccountState().value
     CollectionScreen(
         urlToken = account.urlToken,
         showBackButton = false,

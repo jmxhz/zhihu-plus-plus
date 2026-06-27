@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -18,13 +18,14 @@
 package com.github.zly2006.zhihu.shared.data
 
 import io.ktor.client.HttpClient
-import io.ktor.client.call.body
 import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
-import io.ktor.client.request.get
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import io.ktor.util.network.UnresolvedAddressException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -32,26 +33,12 @@ import kotlin.test.assertFailsWith
 
 class ZhihuDailyClientTest {
     @Test
-    fun nextDailyApiDateHandlesMonthAndLeapYearBoundaries() {
-        assertEquals("20260301", nextDailyApiDate("20260228"))
-        assertEquals("20240229", nextDailyApiDate("20240228"))
-        assertEquals("20250101", nextDailyApiDate("20241231"))
-    }
-
-    @Test
-    fun nextDailyApiDateRejectsInvalidFormat() {
-        assertFailsWith<IllegalArgumentException> {
-            nextDailyApiDate("2026-05-20")
-        }
-    }
-
-    @Test
     fun fetchDailyStoriesForDateRequestsNextDayBeforeEndpoint() = runTest {
         val client = dailyMockClient { url ->
-            assertEquals(zhihuDailyBeforeUrl("20260521"), url)
+            assertEquals("https://news-at.zhihu.com/api/4/stories/before/20260521", url)
         }
 
-        val response: DailyStoriesResponse = client.get(zhihuDailyBeforeUrl(nextDailyApiDate("20260520"))).body()
+        val response = client.fetchDailyStoriesBefore("20260521")
 
         assertEquals("20260520", response.date)
         assertEquals(1L, response.stories.single().id)
@@ -60,39 +47,220 @@ class ZhihuDailyClientTest {
     @Test
     fun fetchLatestDailyStoriesRequestsLatestEndpoint() = runTest {
         val client = dailyMockClient { url ->
-            assertEquals(ZHIHU_DAILY_LATEST_URL, url)
+            assertEquals("https://news-at.zhihu.com/api/4/stories/latest", url)
         }
 
-        val response: DailyStoriesResponse = client.get(ZHIHU_DAILY_LATEST_URL).body()
+        val response = client.fetchLatestDailyStories()
 
         assertEquals("20260520", response.date)
     }
 
     @Test
-    fun fetchDailyStoryContentRequestsStoryEndpoint() = runTest {
-        val client = dailyMockClient(
-            content =
-                """
-                {
-                  "id": 42,
-                  "title": "daily title",
-                  "body": "<p>body</p>",
-                  "image": "https://example.com/cover.png",
-                  "share_url": "https://daily.zhihu.com/story/42"
+    fun fetchLatestDailyStoriesFallsBackToDailyHostWhenPrimaryHostCannotResolve() = runTest {
+        val requestedUrls = mutableListOf<String>()
+        val client = HttpClient(
+            MockEngine { request ->
+                requestedUrls += request.url.toString()
+                if (request.url.host == "news-at.zhihu.com") {
+                    throw UnresolvedAddressException()
                 }
-                """.trimIndent(),
-        ) { url ->
-            assertEquals(zhihuDailyStoryContentUrl(42), url)
+                respondDailyStories()
+            },
+        ) {
+            installZhihuCommonClientConfig(
+                cookies = mutableMapOf(),
+                userAgent = "test-agent",
+            )
         }
 
-        val response = fetchDailyStoryContent(client, 42)
+        val response = client.fetchLatestDailyStories()
 
-        assertEquals("daily title", response.title)
-        assertEquals("<p>body</p>", response.bodyHtml)
+        assertEquals("20260520", response.date)
+        assertEquals(
+            listOf(
+                "https://news-at.zhihu.com/api/4/stories/latest",
+                "https://daily.zhihu.com/api/4/stories/latest",
+            ),
+            requestedUrls,
+        )
     }
 
-    private fun dailyMockClient(
-        content: String =
+    @Test
+    fun fetchLatestDailyStoriesFallsBackForTopLevelHostResolutionMessage() = runTest {
+        val requestedUrls = mutableListOf<String>()
+        val client = HttpClient(
+            MockEngine { request ->
+                requestedUrls += request.url.toString()
+                if (request.url.host == "news-at.zhihu.com") {
+                    throw Exception("Unable to resolve host news-at.zhihu.com")
+                }
+                respondDailyStories()
+            },
+        ) {
+            installZhihuCommonClientConfig(
+                cookies = mutableMapOf(),
+                userAgent = "test-agent",
+            )
+        }
+
+        val response = client.fetchLatestDailyStories()
+
+        assertEquals("20260520", response.date)
+        assertEquals(
+            listOf(
+                "https://news-at.zhihu.com/api/4/stories/latest",
+                "https://daily.zhihu.com/api/4/stories/latest",
+            ),
+            requestedUrls,
+        )
+    }
+
+    @Test
+    fun fetchDailyStoriesBeforeFallsBackToDailyHostWhenPrimaryHostCannotResolve() = runTest {
+        val requestedUrls = mutableListOf<String>()
+        val client = HttpClient(
+            MockEngine { request ->
+                requestedUrls += request.url.toString()
+                if (request.url.host == "news-at.zhihu.com") {
+                    throw UnresolvedAddressException()
+                }
+                respondDailyStories()
+            },
+        ) {
+            installZhihuCommonClientConfig(
+                cookies = mutableMapOf(),
+                userAgent = "test-agent",
+            )
+        }
+
+        val response = client.fetchDailyStoriesBefore("20260521")
+
+        assertEquals("20260520", response.date)
+        assertEquals(
+            listOf(
+                "https://news-at.zhihu.com/api/4/stories/before/20260521",
+                "https://daily.zhihu.com/api/4/stories/before/20260521",
+            ),
+            requestedUrls,
+        )
+    }
+
+    @Test
+    fun fetchDailyStoriesBeforeDoesNotFallbackForNestedHostResolutionMessageOnly() = runTest {
+        val requestedUrls = mutableListOf<String>()
+        val client = HttpClient(
+            MockEngine { request ->
+                requestedUrls += request.url.toString()
+                throw Exception(
+                    "daily api unavailable",
+                    Exception("Unable to resolve host news-at.zhihu.com"),
+                )
+            },
+        ) {
+            installZhihuCommonClientConfig(
+                cookies = mutableMapOf(),
+                userAgent = "test-agent",
+            )
+        }
+
+        assertFailsWith<Exception> {
+            client.fetchDailyStoriesBefore("20260521")
+        }
+        assertEquals(
+            listOf("https://news-at.zhihu.com/api/4/stories/before/20260521"),
+            requestedUrls,
+        )
+    }
+
+    @Test
+    fun fetchLatestDailyStoriesDoesNotFallbackForNonHostFailures() = runTest {
+        val requestedUrls = mutableListOf<String>()
+        val client = HttpClient(
+            MockEngine { request ->
+                requestedUrls += request.url.toString()
+                throw IllegalStateException("daily api unavailable")
+            },
+        ) {
+            installZhihuCommonClientConfig(
+                cookies = mutableMapOf(),
+                userAgent = "test-agent",
+            )
+        }
+
+        assertFailsWith<IllegalStateException> {
+            client.fetchLatestDailyStories()
+        }
+        assertEquals(
+            listOf("https://news-at.zhihu.com/api/4/stories/latest"),
+            requestedUrls,
+        )
+    }
+
+    @Test
+    fun fetchLatestDailyStoriesPropagatesCancellationWithoutFallback() = runTest {
+        val requestedUrls = mutableListOf<String>()
+        val client = HttpClient(
+            MockEngine { request ->
+                requestedUrls += request.url.toString()
+                throw CancellationException("request cancelled")
+            },
+        ) {
+            installZhihuCommonClientConfig(
+                cookies = mutableMapOf(),
+                userAgent = "test-agent",
+            )
+        }
+
+        assertFailsWith<CancellationException> {
+            client.fetchLatestDailyStories()
+        }
+        assertEquals(
+            listOf("https://news-at.zhihu.com/api/4/stories/latest"),
+            requestedUrls,
+        )
+    }
+
+    @Test
+    fun fetchLatestDailyStoriesPropagatesFallbackFailureWhenBothHostsCannotResolve() = runTest {
+        val requestedUrls = mutableListOf<String>()
+        val client = HttpClient(
+            MockEngine { request ->
+                requestedUrls += request.url.toString()
+                throw UnresolvedAddressException()
+            },
+        ) {
+            installZhihuCommonClientConfig(
+                cookies = mutableMapOf(),
+                userAgent = "test-agent",
+            )
+        }
+
+        assertFailsWith<UnresolvedAddressException> {
+            client.fetchLatestDailyStories()
+        }
+        assertEquals(
+            listOf(
+                "https://news-at.zhihu.com/api/4/stories/latest",
+                "https://daily.zhihu.com/api/4/stories/latest",
+            ),
+            requestedUrls,
+        )
+    }
+
+    private fun dailyMockClient(assertUrl: (String) -> Unit): HttpClient = HttpClient(
+        MockEngine { request ->
+            assertUrl(request.url.toString())
+            respondDailyStories()
+        },
+    ) {
+        installZhihuCommonClientConfig(
+            cookies = mutableMapOf(),
+            userAgent = "test-agent",
+        )
+    }
+
+    private fun MockRequestHandleScope.respondDailyStories() = respond(
+        content =
             """
             {
               "date": "20260520",
@@ -108,20 +276,7 @@ class ZhihuDailyClientTest {
               ]
             }
             """.trimIndent(),
-        assertUrl: (String) -> Unit,
-    ): HttpClient = HttpClient(
-        MockEngine { request ->
-            assertUrl(request.url.toString())
-            respond(
-                content = content,
-                status = HttpStatusCode.OK,
-                headers = headersOf(HttpHeaders.ContentType, "application/json"),
-            )
-        },
-    ) {
-        installZhihuCommonClientConfig(
-            cookies = mutableMapOf(),
-            userAgent = "test-agent",
-        )
-    }
+        status = HttpStatusCode.OK,
+        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+    )
 }
