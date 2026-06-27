@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -18,8 +18,12 @@
 package com.github.zly2006.zhihu.nlp
 
 import android.util.Log
+import com.github.zly2006.zhihu.shared.nlp.KeywordSelectionDebug
+import com.github.zly2006.zhihu.shared.nlp.KeywordWithWeight
+import com.github.zly2006.zhihu.shared.nlp.NlpDebugTrace
+import com.github.zly2006.zhihu.shared.nlp.PhraseMatchResult
+import com.github.zly2006.zhihu.shared.nlp.SegmentMatchDebug
 import com.hankcs.hanlp.HanLP
-import com.hankcs.hanlp.seg.common.Term
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.max
@@ -172,7 +176,12 @@ object NLPService {
 
         val embeddings = segments.mapIndexed { idx, segment ->
             val emb = encodeTextOrNull(segment)
-            val preview = previewEmbedding(emb)
+            val preview = if (emb == null) {
+                "null"
+            } else {
+                val head = emb.take(4).joinToString(prefix = "[", postfix = if (emb.size > 4) ", ...]" else "]")
+                "dim=${emb.size} sample=$head"
+            }
             logDebug("segment#$idx len=${segment.length} embedding=${emb?.size ?: 0} preview=$preview")
             emb
         }
@@ -305,7 +314,7 @@ object NLPService {
     }
 
     private suspend fun encodeTextOrNull(text: String): FloatArray? {
-        val normalized = truncateForEmbedding(text)
+        val normalized = text.trim().take(MAX_EMBEDDING_TEXT_LENGTH)
         if (normalized.isBlank()) return null
         return try {
             val embedding = SentenceEmbeddingManager.encode(normalized)
@@ -316,9 +325,6 @@ object NLPService {
             null
         }
     }
-
-    private fun truncateForEmbedding(text: String): String =
-        text.trim().take(MAX_EMBEDDING_TEXT_LENGTH)
 
     private fun cosineSimilarity(
         first: FloatArray,
@@ -344,12 +350,6 @@ object NLPService {
 
     private fun logDebug(message: String) {
         Log.d(TAG, message)
-    }
-
-    private fun previewEmbedding(embedding: FloatArray?): String {
-        if (embedding == null) return "null"
-        val head = embedding.take(4).joinToString(prefix = "[", postfix = if (embedding.size > 4) ", ...]" else "]")
-        return "dim=${embedding.size} sample=$head"
     }
 
     /**
@@ -384,52 +384,6 @@ object NLPService {
         } catch (e: Exception) {
             Log.e(TAG, "checkBlockedPhrases failed", e)
             emptyList()
-        }
-    }
-
-    /**
-     * 对文本进行分词
-     */
-    private fun segment(text: String): List<Term> = HanLP.segment(text)
-
-    /**
-     * 判断是否应该保留该词语（过滤停用词和标点）
-     */
-    private fun shouldKeepTerm(term: Term): Boolean {
-        val nature = term.nature.toString()
-        // 保留名词、动词、形容词等实词
-        return nature.startsWith("n") ||
-            // 名词
-            nature.startsWith("v") ||
-            // 动词
-            nature.startsWith("a") ||
-            // 形容词
-            nature.startsWith("i") ||
-            // 成语
-            nature.startsWith("j") ||
-            // 简称
-            nature.startsWith("l") // 习用语
-    }
-
-    /**
-     * 提取文本摘要（用于显示）
-     * @param text 输入文本
-     * @param maxLength 最大长度
-     * @return 摘要文本
-     */
-    suspend fun extractSummary(text: String, maxLength: Int = 100): String = withContext(Dispatchers.Default) {
-        if (text.length <= maxLength) return@withContext text
-
-        try {
-            // 使用HanLP的自动摘要功能
-            val summary = HanLP.extractSummary(text, 1)
-            if (summary.isNotEmpty()) {
-                summary[0].take(maxLength)
-            } else {
-                text.take(maxLength) + "..."
-            }
-        } catch (e: Exception) {
-            text.take(maxLength) + "..."
         }
     }
 }

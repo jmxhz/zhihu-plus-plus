@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -38,12 +38,12 @@ import com.github.zly2006.zhihu.navigation.Follow
 import com.github.zly2006.zhihu.navigation.Home
 import com.github.zly2006.zhihu.navigation.HotList
 import com.github.zly2006.zhihu.navigation.OnlineHistory
+import com.github.zly2006.zhihu.shared.ui.ANSWER_DOUBLE_TAP_ACTION_PREFERENCE_KEY
+import com.github.zly2006.zhihu.shared.ui.AnswerDoubleTapAction
 import com.github.zly2006.zhihu.test.performVerticalSwipeCycle
 import com.github.zly2006.zhihu.test.resetAppPreferences
 import com.github.zly2006.zhihu.test.setScreenContent
-import com.github.zly2006.zhihu.ui.ANSWER_DOUBLE_TAP_ACTION_PREFERENCE_KEY
 import com.github.zly2006.zhihu.ui.ARTICLE_USE_WEBVIEW_PREFERENCE_KEY
-import com.github.zly2006.zhihu.ui.AnswerDoubleTapAction
 import com.github.zly2006.zhihu.ui.PREFERENCE_NAME
 import com.github.zly2006.zhihu.ui.subscreens.APPEARANCE_SETTINGS_ANSWER_DOUBLE_TAP_TAG
 import com.github.zly2006.zhihu.ui.subscreens.APPEARANCE_SETTINGS_BOTTOM_BAR_SECTION_KEY
@@ -52,9 +52,8 @@ import com.github.zly2006.zhihu.ui.subscreens.APPEARANCE_SETTINGS_START_DESTINAT
 import com.github.zly2006.zhihu.ui.subscreens.APPEARANCE_SETTINGS_USE_WEBVIEW_TAG
 import com.github.zly2006.zhihu.ui.subscreens.AppearanceSettingsScreen
 import com.github.zly2006.zhihu.ui.subscreens.BOTTOM_BAR_ITEMS_PREFERENCE_KEY
+import com.github.zly2006.zhihu.ui.subscreens.BOTTOM_BAR_ITEM_ORDER_PREFERENCE_KEY
 import com.github.zly2006.zhihu.ui.subscreens.START_DESTINATION_PREFERENCE_KEY
-import com.github.zly2006.zhihu.ui.subscreens.appearanceSettingsBottomBarItemTag
-import com.github.zly2006.zhihu.ui.subscreens.appearanceSettingsStartDestinationOptionTag
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -127,21 +126,21 @@ class AppearanceSettingsScreenInstrumentedTest {
         // scroll cycle to ensure the rendered state still matches the persisted SharedPreferences.
         setUpScreen(setting = APPEARANCE_SETTINGS_BOTTOM_BAR_SECTION_KEY)
 
-        scrollUntilTagDisplayed(appearanceSettingsBottomBarItemTag(OnlineHistory.name))
-        composeRule.onNodeWithTag(appearanceSettingsBottomBarItemTag(OnlineHistory.name)).performClick()
+        scrollUntilTagDisplayed("appearanceSettings:bottomBar:item:${OnlineHistory.name}")
+        composeRule.onNodeWithTag("appearanceSettings:bottomBar:item:${OnlineHistory.name}").performClick()
         waitUntilStringSetPreference(
             BOTTOM_BAR_ITEMS_PREFERENCE_KEY,
             expected = setOf(Home.name, Follow.name, Daily.name, Account.name),
         )
 
-        composeRule.onNodeWithTag(appearanceSettingsBottomBarItemTag(HotList.name)).performClick()
+        composeRule.onNodeWithTag("appearanceSettings:bottomBar:item:${HotList.name}").performClick()
         waitUntilStringSetPreference(
             BOTTOM_BAR_ITEMS_PREFERENCE_KEY,
             expected = setOf(Home.name, Follow.name, Daily.name, HotList.name, Account.name),
         )
 
         composeRule.onNodeWithTag(APPEARANCE_SETTINGS_START_DESTINATION_TAG).performClick()
-        composeRule.onNodeWithTag(appearanceSettingsStartDestinationOptionTag(HotList.name)).performClick()
+        composeRule.onNodeWithTag("appearanceSettings:startDestination:option:${HotList.name}").performClick()
 
         waitUntilStringPreference(START_DESTINATION_PREFERENCE_KEY, expected = HotList.name)
         scrollContainer().performVerticalSwipeCycle()
@@ -154,12 +153,34 @@ class AppearanceSettingsScreenInstrumentedTest {
         )
     }
 
+    @Test
+    fun bottomBarRowsKeepUniformHeightAndMoveOrderPersists() {
+        // The bottom-bar editor mixes selected rows, unselected rows, and the non-removable account
+        // row. They should keep the same touch target height while reorder actions still persist.
+        setUpScreen(setting = APPEARANCE_SETTINGS_BOTTOM_BAR_SECTION_KEY)
+
+        scrollUntilTagDisplayed("appearanceSettings:bottomBar:item:${HotList.name}")
+        val selectedHeight = boundsHeightForTag("appearanceSettings:bottomBar:item:${Daily.name}")
+        val unselectedHeight = boundsHeightForTag("appearanceSettings:bottomBar:item:${HotList.name}")
+        val lockedHeight = boundsHeightForTag("appearanceSettings:bottomBar:item:${Account.name}")
+
+        assertEquals(selectedHeight.toDouble(), unselectedHeight.toDouble(), 0.5)
+        assertEquals(selectedHeight.toDouble(), lockedHeight.toDouble(), 0.5)
+
+        composeRule.onNodeWithTag("appearanceSettings:bottomBar:moveDown:${Daily.name}").performClick()
+        waitUntilStringPreference(
+            BOTTOM_BAR_ITEM_ORDER_PREFERENCE_KEY,
+            expected = listOf(Home.name, Follow.name, OnlineHistory.name, Daily.name, Account.name).joinToString(","),
+        )
+    }
+
     private fun setUpScreen(setting: String = "", resetPreferences: Boolean = true) {
         if (resetPreferences) {
             composeRule.resetAppPreferences()
         }
         composeRule.setScreenContent {
             AppearanceSettingsScreen(
+                onExit = {},
                 setting = setting,
             )
         }
@@ -221,6 +242,12 @@ class AppearanceSettingsScreenInstrumentedTest {
                     .isNotEmpty()
         }
     }
+
+    private fun boundsHeightForTag(tag: String): Float = composeRule
+        .onNodeWithTag(tag)
+        .fetchSemanticsNode()
+        .boundsInRoot
+        .height
 
     private fun waitUntilNodeDoesNotExist(matcher: SemanticsMatcher, timeoutMillis: Long = 5_000) {
         composeRule.waitUntil(timeoutMillis) {

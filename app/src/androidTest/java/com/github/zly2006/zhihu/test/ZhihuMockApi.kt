@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -36,6 +36,7 @@ object ZhihuMockApi {
     data class RecordedRequest(
         val method: HttpMethod,
         val url: String,
+        val headers: Map<String, List<String>>,
     )
 
     private data class Route(
@@ -60,7 +61,11 @@ object ZhihuMockApi {
                 context = context,
                 cookies = cookies,
                 engine = MockEngine { request ->
-                    requests += RecordedRequest(request.method, request.url.toString())
+                    requests += RecordedRequest(
+                        method = request.method,
+                        url = request.url.toString(),
+                        headers = request.headers.entries().associate { it.key to it.value },
+                    )
                     val route = routes.firstOrNull { it.predicate(request) }
                     if (route != null) {
                         route.responder(this, request)
@@ -96,12 +101,16 @@ object ZhihuMockApi {
         url: String,
         body: String,
         status: HttpStatusCode = HttpStatusCode.OK,
+        beforeRespond: suspend () -> Unit = {},
     ) {
         routes.add(
             0,
             Route(
                 predicate = { request -> request.method == method && request.url.toString() == url },
-                responder = { jsonResponse(status, body) },
+                responder = {
+                    beforeRespond()
+                    jsonResponse(status, body)
+                },
             ),
         )
     }
@@ -186,6 +195,29 @@ object ZhihuMockApi {
             url = "https://www.zhihu.com/api/v4/notifications/v2/recent?limit=20&include=data%5B%2A%5D.content%2Cexcerpt%2Cheadline",
             body = emptyFeedResponse,
         )
+        mockJson(
+            method = HttpMethod.Get,
+            url = "https://api.zhihu.com/notifications/v3/message/v3?limit=20",
+            body =
+                """
+                {
+                  "head": [
+                    {"type": "entry", "detail_title": "评论转发@", "unread_count": 0},
+                    {"type": "entry", "detail_title": "赞同喜欢", "unread_count": 0},
+                    {"type": "entry", "detail_title": "收藏了我", "unread_count": 0},
+                    {"type": "entry", "detail_title": "关注订阅", "unread_count": 0}
+                  ],
+                  "data": []
+                }
+                """.trimIndent(),
+        )
+        listOf("comment", "like", "follow", "favlist_me").forEach { entry ->
+            mockJson(
+                method = HttpMethod.Get,
+                url = "https://api.zhihu.com/notifications/v3/timeline/entry/$entry?limit=20",
+                body = emptyFeedResponse,
+            )
+        }
         mockJson(
             method = HttpMethod.Get,
             url = "https://api.zhihu.com/unify-consumption/read_history?offset=0&limit=10&include=data%5B%2A%5D.content%2Cexcerpt%2Cheadline",

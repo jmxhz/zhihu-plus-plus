@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -33,21 +33,24 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
-import androidx.test.espresso.Espresso.pressBack
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.github.zly2006.zhihu.data.AccountData
-import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
 import com.github.zly2006.zhihu.navigation.CommentHolder
 import com.github.zly2006.zhihu.navigation.NavDestination
 import com.github.zly2006.zhihu.navigation.Person
+import com.github.zly2006.zhihu.shared.comment.CommentSortOrder
+import com.github.zly2006.zhihu.shared.data.DataHolder
+import com.github.zly2006.zhihu.shared.viewmodel.CommentItem
+import com.github.zly2006.zhihu.test.InstrumentedTestEnvironment
 import com.github.zly2006.zhihu.test.MainActivityComposeRule
 import com.github.zly2006.zhihu.test.RecordingNavigator
 import com.github.zly2006.zhihu.test.ZhihuMockApi
 import com.github.zly2006.zhihu.test.performHorizontalSwipeCycle
 import com.github.zly2006.zhihu.test.performVerticalSwipeCycle
+import com.github.zly2006.zhihu.test.pressSystemBack
 import com.github.zly2006.zhihu.test.resetAppPreferences
+import com.github.zly2006.zhihu.test.seedViewModel
 import com.github.zly2006.zhihu.test.setScreenContent
 import com.github.zly2006.zhihu.ui.COMMENT_CANCEL_REPLY_TAG
 import com.github.zly2006.zhihu.ui.COMMENT_IMAGE_MENU_BROWSER_TAG
@@ -63,18 +66,12 @@ import com.github.zly2006.zhihu.ui.COMMENT_SORT_TIME_TAG
 import com.github.zly2006.zhihu.ui.CommentImageMenuAction
 import com.github.zly2006.zhihu.ui.CommentScreen
 import com.github.zly2006.zhihu.ui.CommentScreenTestOverrides
-import com.github.zly2006.zhihu.ui.commentAuthorTag
-import com.github.zly2006.zhihu.ui.commentChildButtonTag
-import com.github.zly2006.zhihu.ui.commentImageTag
-import com.github.zly2006.zhihu.ui.commentLikeButtonTag
-import com.github.zly2006.zhihu.ui.commentReplyButtonTag
-import com.github.zly2006.zhihu.ui.commentReplyToAuthorTag
-import com.github.zly2006.zhihu.ui.commentRowTag
-import com.github.zly2006.zhihu.viewmodel.CommentItem
+import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
+import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
 import com.github.zly2006.zhihu.viewmodel.comment.BaseCommentViewModel
-import com.github.zly2006.zhihu.viewmodel.comment.CommentSortOrder
-import com.github.zly2006.zhihu.viewmodel.filter.BlocklistManager
-import io.ktor.client.HttpClient
+import com.github.zly2006.zhihu.viewmodel.filter.BlockedUser
+import com.github.zly2006.zhihu.viewmodel.filter.getContentFilterDatabase
+import com.github.zly2006.zhihu.viewmodel.paginationEnvironment
 import io.ktor.http.HttpMethod
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
@@ -94,7 +91,10 @@ class CommentScreenInstrumentedTest {
     @Before
     fun setUp() = runBlocking {
         composeRule.resetAppPreferences()
-        BlocklistManager.getInstance(composeRule.activity).clearAllBlockedUsers()
+        ZhihuMockApi.install(enabled = true)
+        ZhihuMockApi.reset()
+        val database = getContentFilterDatabase(composeRule.activity)
+        database.blockedUserDao().clearAllUsers()
         ZhihuMockApi.mockJsonPrefix(
             method = HttpMethod.Post,
             urlPrefix = "https://www.zhihu.com/api/v4/comments/",
@@ -109,7 +109,9 @@ class CommentScreenInstrumentedTest {
 
     @After
     fun tearDown() = runBlocking {
-        BlocklistManager.getInstance(composeRule.activity).clearAllBlockedUsers()
+        val database = getContentFilterDatabase(composeRule.activity)
+        database.blockedUserDao().clearAllUsers()
+        ZhihuMockApi.install(enabled = InstrumentedTestEnvironment.isMockMode())
     }
 
     @Test
@@ -129,17 +131,12 @@ class CommentScreenInstrumentedTest {
         val archivedCommentIds = mutableListOf<String>()
         val childEntryCommentIds = mutableListOf<String>()
         val seededComments = seedRootComments(count = 24)
-        val viewModel = SeededRootCommentViewModel(
-            article = ROOT_ARTICLE,
-            seededComments = seededComments,
-        )
+        val viewModel = seedRootCommentViewModel(seededComments)
 
         val navigator = setCommentScreen(
-            viewModel = viewModel,
             onChildCommentClick = { childEntryCommentIds += it.item.id },
             testOverrides = CommentScreenTestOverrides(
                 viewModel = viewModel,
-                skipInitialLoad = true,
                 onArchiveComment = { archivedCommentIds += it.item.id },
             ),
         )
@@ -151,39 +148,39 @@ class CommentScreenInstrumentedTest {
 
         composeRule
             .onNodeWithTag(COMMENT_SCREEN_LIST_TAG)
-            .performScrollToNode(hasTestTag(commentRowTag("root-20")))
-        composeRule.onNodeWithTag(commentRowTag("root-20")).assertIsDisplayed()
+            .performScrollToNode(hasTestTag("comment_row_root-20"))
+        composeRule.onNodeWithTag("comment_row_root-20").assertIsDisplayed()
         composeRule.onNodeWithTag(COMMENT_SCREEN_LIST_TAG).performVerticalSwipeCycle()
         composeRule.onNodeWithTag(COMMENT_SCREEN_LIST_TAG).performHorizontalSwipeCycle()
         composeRule
             .onNodeWithTag(COMMENT_SCREEN_LIST_TAG)
-            .performScrollToNode(hasTestTag(commentRowTag("root-20")))
-        composeRule.onNodeWithTag(commentRowTag("root-20")).assertIsDisplayed()
+            .performScrollToNode(hasTestTag("comment_row_root-20"))
+        composeRule.onNodeWithTag("comment_row_root-20").assertIsDisplayed()
         assertTrue(viewModel.loadMoreCount > 0)
 
         composeRule
             .onNodeWithTag(COMMENT_SCREEN_LIST_TAG)
-            .performScrollToNode(hasTestTag(commentRowTag("root-1")))
-        composeRule.onNodeWithTag(commentRowTag("root-1")).assertIsDisplayed()
-        composeRule.onNodeWithTag(commentRowTag("root-1")).performTouchInput { swipeRight() }
+            .performScrollToNode(hasTestTag("comment_row_root-1"))
+        composeRule.onNodeWithTag("comment_row_root-1").assertIsDisplayed()
+        composeRule.onNodeWithTag("comment_row_root-1").performTouchInput { swipeRight() }
         composeRule.waitForIdle()
         composeRule
             .onNodeWithTag(COMMENT_SCREEN_LIST_TAG)
-            .performScrollToNode(hasTestTag(commentRowTag("root-2")))
-        composeRule.onNodeWithTag(commentRowTag("root-2")).performTouchInput { swipeLeft() }
+            .performScrollToNode(hasTestTag("comment_row_root-2"))
+        composeRule.onNodeWithTag("comment_row_root-2").performTouchInput { swipeLeft() }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag(commentAuthorTag("root-1")).performClick()
-        composeRule.onNodeWithTag(commentReplyToAuthorTag("root-2")).performClick()
-        composeRule.onNodeWithTag(commentReplyButtonTag("root-1")).performClick()
-        composeRule.onNodeWithTag(commentChildButtonTag("root-1")).performClick()
-        composeRule.onNodeWithTag(commentLikeButtonTag("root-1")).performClick()
+        composeRule.onNodeWithTag("comment_author_root-1").performClick()
+        composeRule.onNodeWithTag("comment_reply_to_author_root-2").performClick()
+        composeRule.onNodeWithTag("comment_reply_button_root-1").performClick()
+        composeRule.onNodeWithTag("comment_child_button_root-1").performClick()
+        composeRule.onNodeWithTag("comment_like_button_root-1").performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
             seededComments.first().likeCount == 6 && seededComments.first().liked
         }
 
         assertEquals(listOf("root-1"), archivedCommentIds)
-        assertEquals(listOf("root-2", "root-1"), childEntryCommentIds)
+        assertEquals(listOf("root-2", "root-1", "root-1"), childEntryCommentIds)
         assertEquals(
             listOf(
                 Person(id = "author-root-1", urlToken = "author-root-1-token", name = "离线作者 1"),
@@ -204,55 +201,49 @@ class CommentScreenInstrumentedTest {
          *    deterministic order instead of starting real dialogs, intents, or storage writes.
          */
         val imageActions = mutableListOf<CommentImageMenuAction>()
-        val viewModel = SeededRootCommentViewModel(
-            article = ROOT_ARTICLE,
-            seededComments = seedRootComments(count = 4),
-        )
+        val viewModel = seedRootCommentViewModel(seedRootComments(count = 4))
 
         setCommentScreen(
-            viewModel = viewModel,
             testOverrides = CommentScreenTestOverrides(
                 viewModel = viewModel,
-                skipInitialLoad = true,
                 onImageMenuAction = { action, _ -> imageActions += action },
             ),
         )
 
         composeRule
             .onNodeWithTag(COMMENT_SCREEN_LIST_TAG)
-            .performScrollToNode(hasTestTag(commentImageTag("root-1")))
+            .performScrollToNode(hasTestTag("comment_image_root-1"))
         composeRule.waitUntil(timeoutMillis = 5_000) {
             runCatching {
-                composeRule.onNodeWithTag(commentImageTag("root-1"), useUnmergedTree = true).assertIsDisplayed()
+                composeRule.onNodeWithTag("comment_image_root-1", useUnmergedTree = true).assertIsDisplayed()
             }.isSuccess
         }
         composeRule
-            .onNodeWithTag(commentImageTag("root-1"), useUnmergedTree = true)
+            .onNodeWithTag("comment_image_root-1", useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.OnLongClick)
         composeRule.onNodeWithTag(COMMENT_IMAGE_MENU_OPEN_TAG, useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithTag(COMMENT_IMAGE_MENU_BROWSER_TAG, useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithTag(COMMENT_IMAGE_MENU_SAVE_TAG, useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithTag(COMMENT_IMAGE_MENU_SHARE_TAG, useUnmergedTree = true).assertIsDisplayed()
 
-        pressBack()
-        composeRule.waitForIdle()
+        composeRule.pressSystemBack()
         composeRule.onAllNodesWithTag(COMMENT_IMAGE_MENU_OPEN_TAG, useUnmergedTree = true).assertCountEquals(0)
 
-        composeRule.onNodeWithTag(commentImageTag("root-1"), useUnmergedTree = true).performClick()
+        composeRule.onNodeWithTag("comment_image_root-1", useUnmergedTree = true).performClick()
         composeRule
-            .onNodeWithTag(commentImageTag("root-1"), useUnmergedTree = true)
+            .onNodeWithTag("comment_image_root-1", useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.OnLongClick)
         composeRule.onNodeWithTag(COMMENT_IMAGE_MENU_OPEN_TAG, useUnmergedTree = true).performClick()
         composeRule
-            .onNodeWithTag(commentImageTag("root-1"), useUnmergedTree = true)
+            .onNodeWithTag("comment_image_root-1", useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.OnLongClick)
         composeRule.onNodeWithTag(COMMENT_IMAGE_MENU_BROWSER_TAG, useUnmergedTree = true).performClick()
         composeRule
-            .onNodeWithTag(commentImageTag("root-1"), useUnmergedTree = true)
+            .onNodeWithTag("comment_image_root-1", useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.OnLongClick)
         composeRule.onNodeWithTag(COMMENT_IMAGE_MENU_SAVE_TAG, useUnmergedTree = true).performClick()
         composeRule
-            .onNodeWithTag(commentImageTag("root-1"), useUnmergedTree = true)
+            .onNodeWithTag("comment_image_root-1", useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.OnLongClick)
         composeRule.onNodeWithTag(COMMENT_IMAGE_MENU_SHARE_TAG, useUnmergedTree = true).performClick()
 
@@ -266,6 +257,70 @@ class CommentScreenInstrumentedTest {
             ),
             imageActions,
         )
+    }
+
+    @Test
+    fun commentWithImageKeepsReplyAndLikeActionsVisible() {
+        /*
+         * Expected behavior:
+         * 1. A comment containing an inline image should still render the same bottom action row as
+         *    text-only comments.
+         * 2. The reply and like buttons must remain visible and clickable after the image content is
+         *    laid out.
+         */
+        val childEntryCommentIds = mutableListOf<String>()
+        val seededComments = seedRootComments(count = 4)
+        val viewModel = seedRootCommentViewModel(seededComments)
+
+        setCommentScreen(
+            onChildCommentClick = { childEntryCommentIds += it.item.id },
+            testOverrides = CommentScreenTestOverrides(viewModel = viewModel),
+        )
+
+        composeRule
+            .onNodeWithTag(COMMENT_SCREEN_LIST_TAG)
+            .performScrollToNode(hasTestTag("comment_image_root-1"))
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            runCatching {
+                composeRule.onNodeWithTag("comment_image_root-1", useUnmergedTree = true).assertIsDisplayed()
+            }.isSuccess
+        }
+
+        composeRule.onNodeWithTag("comment_reply_button_root-1").assertIsDisplayed()
+        composeRule.onNodeWithTag("comment_like_button_root-1").assertIsDisplayed()
+        val rowBounds = composeRule
+            .onAllNodesWithTag("comment_row_root-1")
+            .fetchSemanticsNodes()
+            .single()
+            .boundsInRoot
+        val imageBounds = composeRule
+            .onAllNodesWithTag("comment_image_root-1", useUnmergedTree = true)
+            .fetchSemanticsNodes()
+            .single()
+            .boundsInRoot
+        val replyBounds = composeRule
+            .onAllNodesWithTag("comment_reply_button_root-1")
+            .fetchSemanticsNodes()
+            .single()
+            .boundsInRoot
+        val likeBounds = composeRule
+            .onAllNodesWithTag("comment_like_button_root-1")
+            .fetchSemanticsNodes()
+            .single()
+            .boundsInRoot
+        val expectedBottom = maxOf(imageBounds.bottom, replyBounds.bottom, likeBounds.bottom)
+        assertTrue(
+            "Comment row should include image and action row bounds, but row bottom was " +
+                "${rowBounds.bottom} and content bottom was $expectedBottom",
+            rowBounds.bottom >= expectedBottom,
+        )
+        composeRule.onNodeWithTag("comment_reply_button_root-1").performClick()
+        composeRule.onNodeWithTag("comment_like_button_root-1").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            seededComments.first().likeCount == 6 && seededComments.first().liked
+        }
+
+        assertEquals(listOf("root-1"), childEntryCommentIds)
     }
 
     @Test
@@ -289,15 +344,14 @@ class CommentScreenInstrumentedTest {
         )
 
         setCommentScreen(
-            viewModel = viewModel,
+            content = viewModel.article,
             activeCommentItem = activeCommentItem,
             testOverrides = CommentScreenTestOverrides(
                 viewModel = viewModel,
-                skipInitialLoad = true,
             ),
         )
 
-        composeRule.onNodeWithTag(commentRowTag("child-1")).performTouchInput { swipeLeft() }
+        composeRule.onNodeWithTag("comment_row_child-1").performTouchInput { swipeLeft() }
         composeRule.onNodeWithTag(COMMENT_REPLY_BANNER_TAG).assertIsDisplayed()
         composeRule.onNodeWithText("回复 子回复作者 1").assertIsDisplayed()
         composeRule.onNodeWithText("回复 子回复作者 1...").assertIsDisplayed()
@@ -306,7 +360,7 @@ class CommentScreenInstrumentedTest {
         composeRule.onAllNodesWithTag(COMMENT_REPLY_BANNER_TAG).assertCountEquals(0)
         composeRule.onNodeWithText("写下你的评论...").assertIsDisplayed()
 
-        composeRule.onNodeWithTag(commentRowTag("child-1")).performTouchInput { swipeLeft() }
+        composeRule.onNodeWithTag("comment_row_child-1").performTouchInput { swipeLeft() }
         composeRule.onNodeWithTag(COMMENT_INPUT_TAG).performTextInput("离线发送的回复")
         composeRule.onNodeWithTag(COMMENT_SEND_BUTTON_TAG).performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {
@@ -328,14 +382,11 @@ class CommentScreenInstrumentedTest {
          * 2. Kept root comments should also drop embedded child comments from blocked users before
          *    the screen receives them.
          */
-        val viewModel = SeededRootCommentViewModel(
-            article = ROOT_ARTICLE,
-            seededComments = emptyList(),
-        )
+        val viewModel = seedRootCommentViewModel(emptyList())
         runBlocking {
-            val blocklistManager = BlocklistManager.getInstance(composeRule.activity)
-            blocklistManager.addBlockedUser("blocked-root-author", "被屏蔽根评论作者")
-            blocklistManager.addBlockedUser("blocked-child-author", "被屏蔽子评论作者")
+            val database = getContentFilterDatabase(composeRule.activity)
+            database.blockedUserDao().insertUser(BlockedUser("blocked-root-author", "被屏蔽根评论作者"))
+            database.blockedUserDao().insertUser(BlockedUser("blocked-child-author", "被屏蔽子评论作者"))
             viewModel.processForTest(
                 composeRule.activity,
                 listOf(
@@ -371,38 +422,41 @@ class CommentScreenInstrumentedTest {
         }
 
         setCommentScreen(
-            viewModel = viewModel,
-            testOverrides = CommentScreenTestOverrides(
-                viewModel = viewModel,
-                skipInitialLoad = true,
-            ),
+            testOverrides = CommentScreenTestOverrides(viewModel = viewModel),
         )
 
-        composeRule.onNodeWithTag(commentRowTag("allowed-root")).assertIsDisplayed()
+        composeRule.onNodeWithTag("comment_row_allowed-root").assertIsDisplayed()
         composeRule.onNodeWithText("可见根评论作者").assertIsDisplayed()
         composeRule.onNodeWithText("这条内嵌子评论应展示").assertIsDisplayed()
-        composeRule.onAllNodesWithTag(commentRowTag("blocked-root")).assertCountEquals(0)
-        composeRule.onAllNodesWithTag(commentRowTag("blocked-child")).assertCountEquals(0)
+        composeRule.onAllNodesWithTag("comment_row_blocked-root").assertCountEquals(0)
+        composeRule.onAllNodesWithTag("comment_row_blocked-child").assertCountEquals(0)
         composeRule.onAllNodesWithText("被屏蔽根评论作者").assertCountEquals(0)
         composeRule.onAllNodesWithText("被屏蔽子评论作者").assertCountEquals(0)
     }
 
     private fun setCommentScreen(
-        viewModel: BaseCommentViewModel,
+        content: NavDestination = ROOT_ARTICLE,
         activeCommentItem: CommentItem? = null,
         onChildCommentClick: (CommentItem) -> Unit = {},
-        testOverrides: CommentScreenTestOverrides,
+        testOverrides: CommentScreenTestOverrides? = null,
     ): RecordingNavigator = composeRule.setScreenContent {
         CommentScreen(
-            httpClient = httpClient(),
-            content = { viewModel.article },
+            content = { content },
             activeCommentItem = activeCommentItem,
             onChildCommentClick = onChildCommentClick,
             testOverrides = testOverrides,
         )
     }
 
-    private fun httpClient(): HttpClient = AccountData.httpClient(composeRule.activity)
+    private fun seedRootCommentViewModel(seededComments: List<DataHolder.Comment>): SeededRootCommentViewModel =
+        composeRule.seedViewModel<SeededRootCommentViewModel>(
+            key = ROOT_ARTICLE_COMMENT_VIEW_MODEL_KEY,
+        ) {
+            SeededRootCommentViewModel(
+                article = ROOT_ARTICLE,
+                seededComments = seededComments,
+            )
+        }
 
     private class SeededRootCommentViewModel(
         article: NavDestination,
@@ -427,22 +481,21 @@ class CommentScreenInstrumentedTest {
             CommentItem(comment, CommentHolder(comment.id, article))
 
         suspend fun processForTest(context: android.content.Context, data: List<DataHolder.Comment>) {
-            processResponse(context, data, JsonArray(emptyList()))
+            processResponse(paginationEnvironment(context), data, JsonArray(emptyList()))
         }
 
-        override fun loadMore(context: android.content.Context) {
+        override fun loadMore(environment: PaginationEnvironment) {
             loadMoreCount += 1
         }
 
-        override fun refresh(context: android.content.Context) {
+        override fun refresh(environment: PaginationEnvironment) {
             refreshHistory += sortOrder
         }
 
         override fun submitComment(
             content: NavDestination,
             commentText: String,
-            httpClient: HttpClient,
-            context: android.content.Context,
+            environment: ZhihuApiEnvironment,
             replyToCommentId: String?,
             onSuccess: () -> Unit,
         ) = Unit
@@ -470,13 +523,12 @@ class CommentScreenInstrumentedTest {
         override fun createCommentItem(comment: DataHolder.Comment, article: NavDestination): CommentItem =
             CommentItem(comment, null)
 
-        override fun loadMore(context: android.content.Context) = Unit
+        override fun loadMore(environment: PaginationEnvironment) = Unit
 
         override fun submitComment(
             content: NavDestination,
             commentText: String,
-            httpClient: HttpClient,
-            context: android.content.Context,
+            environment: ZhihuApiEnvironment,
             replyToCommentId: String?,
             onSuccess: () -> Unit,
         ) {
@@ -618,5 +670,6 @@ class CommentScreenInstrumentedTest {
             id = 9001L,
             title = "离线评论宿主回答",
         )
+        val ROOT_ARTICLE_COMMENT_VIEW_MODEL_KEY = "article:${ROOT_ARTICLE.type}:${ROOT_ARTICLE.id}"
     }
 }

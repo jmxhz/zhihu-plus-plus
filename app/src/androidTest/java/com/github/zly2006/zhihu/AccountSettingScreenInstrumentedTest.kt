@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -36,6 +36,7 @@ import com.github.zly2006.zhihu.navigation.Follow
 import com.github.zly2006.zhihu.navigation.Home
 import com.github.zly2006.zhihu.navigation.Notification
 import com.github.zly2006.zhihu.navigation.OnlineHistory
+import com.github.zly2006.zhihu.test.InstrumentedTestEnvironment
 import com.github.zly2006.zhihu.test.MainActivityComposeRule
 import com.github.zly2006.zhihu.test.RecordingNavigator
 import com.github.zly2006.zhihu.test.ZhihuMockApi
@@ -54,6 +55,7 @@ import com.github.zly2006.zhihu.ui.ACCOUNT_SETTINGS_SHORTCUT_HISTORY_TAG
 import com.github.zly2006.zhihu.ui.ACCOUNT_SETTINGS_SHORTCUT_NOTIFICATION_TAG
 import com.github.zly2006.zhihu.ui.ACCOUNT_SETTINGS_SYSTEM_TAG
 import com.github.zly2006.zhihu.ui.AccountSettingScreen
+import com.github.zly2006.zhihu.ui.AccountSettingsAccountState
 import com.github.zly2006.zhihu.ui.PREFERENCE_NAME
 import com.github.zly2006.zhihu.ui.subscreens.BOTTOM_BAR_ITEMS_PREFERENCE_KEY
 import io.ktor.http.HttpMethod
@@ -65,7 +67,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.concurrent.atomic.AtomicInteger
-import com.github.zly2006.zhihu.data.Person as AccountPerson
+import com.github.zly2006.zhihu.shared.data.Person as AccountPerson
 
 @RunWith(AndroidJUnit4::class)
 class AccountSettingScreenInstrumentedTest {
@@ -84,6 +86,7 @@ class AccountSettingScreenInstrumentedTest {
     @After
     fun tearDown() {
         AccountData.delete(composeRule.activity)
+        ZhihuMockApi.install(enabled = InstrumentedTestEnvironment.isMockMode())
         composeRule.resetAppPreferences()
     }
 
@@ -153,7 +156,7 @@ class AccountSettingScreenInstrumentedTest {
         // Expected behavior:
         // 1. A fully local seeded account plus SharedPreferences should be enough to render the
         //    logged-in shortcut cluster, and entering the screen should refresh `/me` through the
-        //    real AccountData.fetchGet() path against the mocked HTTP layer.
+        //    real authenticated fetch path against the mocked HTTP layer.
         // 2. The favorites shortcut should navigate to the seeded Collections destination and must
         //    not close the surrounding account surface.
         // 3. The notification and history shortcuts represent overlay-style exits from the account
@@ -167,6 +170,8 @@ class AccountSettingScreenInstrumentedTest {
                 linkedSetOf(Home.name, Follow.name, Daily.name),
             ).commit()
         AccountData.saveData(composeRule.activity, seededLoggedInAccountData())
+        ZhihuMockApi.install(enabled = true)
+        ZhihuMockApi.reset()
         ZhihuMockApi.mockJson(
             method = HttpMethod.Get,
             url = "https://www.zhihu.com/api/v4/me",
@@ -254,7 +259,7 @@ class AccountSettingScreenInstrumentedTest {
         unreadCount: Int = 0,
         onDismissRequest: () -> Unit = {},
         refreshAccountProfileOnEnter: Boolean = false,
-        testAccountData: AccountData.Data? = null,
+        testAccountData: AccountSettingsAccountState? = null,
     ): RecordingNavigator = composeRule.setScreenContent {
         AccountSettingScreen(
             innerPadding = PaddingValues(),

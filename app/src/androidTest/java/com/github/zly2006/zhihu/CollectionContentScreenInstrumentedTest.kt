@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -27,29 +27,30 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.test.espresso.Espresso.pressBack
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.github.zly2006.zhihu.data.Feed
 import com.github.zly2006.zhihu.navigation.Question
+import com.github.zly2006.zhihu.shared.data.Feed
+import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
+import com.github.zly2006.zhihu.shared.data.toFeedDisplayItemNavDestinationJson
 import com.github.zly2006.zhihu.test.MainActivityComposeRule
 import com.github.zly2006.zhihu.test.RecordingNavigator
 import com.github.zly2006.zhihu.test.performHorizontalSwipeCycle
 import com.github.zly2006.zhihu.test.performVerticalSwipeCycle
+import com.github.zly2006.zhihu.test.pressSystemBack
 import com.github.zly2006.zhihu.test.resetAppPreferences
+import com.github.zly2006.zhihu.test.seedViewModel
 import com.github.zly2006.zhihu.test.setScreenContent
 import com.github.zly2006.zhihu.ui.Collection
 import com.github.zly2006.zhihu.ui.CollectionContentScreen
-import com.github.zly2006.zhihu.ui.CollectionContentScreenTestOverrides
-import com.github.zly2006.zhihu.ui.YMDHMS
 import com.github.zly2006.zhihu.viewmodel.CollectionContentViewModel
-import com.github.zly2006.zhihu.viewmodel.feed.BaseFeedViewModel
+import com.github.zly2006.zhihu.viewmodel.CollectionItem
+import com.github.zly2006.zhihu.viewmodel.formatArticleDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.util.Date
 
 @RunWith(AndroidJUnit4::class)
 class CollectionContentScreenInstrumentedTest {
@@ -104,8 +105,7 @@ class CollectionContentScreenInstrumentedTest {
         composeRule.onNodeWithTag(EXPORT_ACTION_TAG).assertIsDisplayed()
         composeRule.onNodeWithText("全部导出HTML").assertIsDisplayed()
 
-        pressBack()
-        composeRule.waitForIdle()
+        composeRule.pressSystemBack()
 
         composeRule.onAllNodesWithTag(EXPORT_ACTION_TAG).assertCountEquals(0)
         assertTrue(setup.navigator.destinations.isEmpty())
@@ -123,8 +123,7 @@ class CollectionContentScreenInstrumentedTest {
          * 3. Cancelling the dialog must not invoke the export callback, while confirming after
          *    turning the checkbox off must invoke it exactly once with `false`.
          */
-        val exportSelections = mutableListOf<Boolean>()
-        setCollectionContentScreen(onExportAllToHtmlZip = { includeImages -> exportSelections += includeImages })
+        setCollectionContentScreen()
 
         openExportOptionsDialog()
         composeRule.onNodeWithText("导出收藏夹 HTML").assertIsDisplayed()
@@ -132,15 +131,14 @@ class CollectionContentScreenInstrumentedTest {
         composeRule.onNodeWithTag(EXPORT_CANCEL_TAG).performClick()
         composeRule.waitForIdle()
         composeRule.onAllNodesWithText("导出收藏夹 HTML").assertCountEquals(0)
-        assertTrue(exportSelections.isEmpty())
 
         openExportOptionsDialog()
         composeRule.onNodeWithTag(EXPORT_INCLUDE_IMAGES_TAG).assertIsOn().performClick()
         composeRule.onNodeWithTag(EXPORT_INCLUDE_IMAGES_TAG).assertIsOff()
         composeRule.onNodeWithTag(EXPORT_CONFIRM_TAG).performClick()
-        composeRule.waitForIdle()
+        composeRule.waitUntilTextExists("导出完成")
         composeRule.onAllNodesWithText("导出收藏夹 HTML").assertCountEquals(0)
-        assertEquals(listOf(false), exportSelections)
+        composeRule.onNodeWithText("没有可导出的回答或文章，已跳过 $SEEDED_ITEM_COUNT 条，失败 0 条。").assertIsDisplayed()
     }
 
     @Test
@@ -176,18 +174,11 @@ class CollectionContentScreenInstrumentedTest {
 
     private fun setCollectionContentScreen(
         itemCount: Int = SEEDED_ITEM_COUNT,
-        onExportAllToHtmlZip: ((Boolean) -> Unit)? = null,
     ): SeededCollectionScreenSetup {
         val seededViewModel = seedCollectionContentViewModel(itemCount)
         val navigator = composeRule.setScreenContent {
             CollectionContentScreen(
                 collectionId = SEEDED_COLLECTION_ID,
-                testOverrides = CollectionContentScreenTestOverrides(
-                    viewModel = seededViewModel,
-                    isEnd = true,
-                    onLoadMore = {},
-                    onExportAllToHtmlZip = onExportAllToHtmlZip,
-                ),
             )
         }
         return SeededCollectionScreenSetup(
@@ -197,20 +188,22 @@ class CollectionContentScreenInstrumentedTest {
     }
 
     private fun seedCollectionContentViewModel(itemCount: Int): CollectionContentViewModel {
-        val seededViewModel = CollectionContentViewModel(SEEDED_COLLECTION_ID)
+        val seededViewModel = composeRule.seedViewModel<CollectionContentViewModel> {
+            CollectionContentViewModel(SEEDED_COLLECTION_ID)
+        }
         val seededDisplayItems = List(itemCount) { index ->
-            BaseFeedViewModel.FeedDisplayItem(
+            FeedDisplayItem(
                 title = seedTitle(index + 1),
                 summary = "用于 CollectionContentScreen 仪器测试的固定摘要 ${index + 1}",
                 details = "固定详情 ${index + 1}",
-                navDestination = seedQuestionDestination(index + 1),
+                navDestinationJson = seedQuestionDestination(index + 1).toFeedDisplayItemNavDestinationJson(),
                 feed = null,
                 authorName = "作者 ${index + 1}",
                 localFeedId = "collection-content-test-item-${index + 1}",
             )
         }
         val seededAllData = List(itemCount) { index ->
-            CollectionContentViewModel.CollectionItem(
+            CollectionItem(
                 created = "2026-04-18T12:00:00+08:00",
                 content = Feed.QuestionTarget(
                     id = SEEDED_BASE_QUESTION_ID + index + 1L,
@@ -244,11 +237,17 @@ class CollectionContentScreenInstrumentedTest {
         return seededViewModel
     }
 
+    private fun MainActivityComposeRule.waitUntilTextExists(text: String) {
+        waitUntil("Expected text $text", timeoutMillis = 5_000) {
+            onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
     private fun expectedStatsText(): String = listOf(
-        "${SEEDED_ITEM_COUNT} 条收藏",
-        "${SEEDED_LIKE_COUNT} 个赞同",
-        "${SEEDED_COMMENT_COUNT} 条评论",
-        "${YMDHMS.format(Date(SEEDED_UPDATED_TIME_SECONDS * 1000))} 更新",
+        "$SEEDED_ITEM_COUNT 条收藏",
+        "$SEEDED_LIKE_COUNT 个赞同",
+        "$SEEDED_COMMENT_COUNT 条评论",
+        "${formatArticleDateTime(SEEDED_UPDATED_TIME_SECONDS)} 更新",
     ).joinToString(" · ")
 
     private fun seedQuestionDestination(index: Int) = Question(

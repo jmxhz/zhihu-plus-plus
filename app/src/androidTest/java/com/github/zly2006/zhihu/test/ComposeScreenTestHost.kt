@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -34,7 +34,7 @@ import com.github.zly2006.zhihu.navigation.LocalNavigator
 import com.github.zly2006.zhihu.navigation.NavDestination
 import com.github.zly2006.zhihu.navigation.Navigator
 import com.github.zly2006.zhihu.theme.ZhihuTheme
-import com.github.zly2006.zhihu.ui.ZhihuMain
+import com.github.zly2006.zhihu.ui.AndroidZhihuMain
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -89,7 +89,7 @@ fun MainActivityComposeRule.setZhihuMainContent() {
     waitForIdle()
     activity.setContent {
         ZhihuTheme {
-            ZhihuMain(navController = rememberNavController())
+            AndroidZhihuMain(navController = rememberNavController())
         }
     }
     waitForIdle()
@@ -98,6 +98,13 @@ fun MainActivityComposeRule.setZhihuMainContent() {
 fun SemanticsNodeInteraction.performVerticalSwipeCycle() {
     performTouchInput { swipeUp() }
     performTouchInput { swipeDown() }
+}
+
+fun MainActivityComposeRule.pressSystemBack() {
+    activityRule.scenario.onActivity {
+        it.onBackPressedDispatcher.onBackPressed()
+    }
+    waitForIdle()
 }
 
 fun SemanticsNodeInteraction.performHorizontalSwipeCycle() {

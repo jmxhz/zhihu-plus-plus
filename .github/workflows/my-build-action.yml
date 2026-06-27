@@ -30,8 +30,63 @@ permissions:
   contents: write
 
 jobs:
+  build-desktop:
+    name: Build Desktop App (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set Up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Change wrapper permissions
+        shell: bash
+        run: chmod +x ./gradlew
+
+      - name: Set desktop artifact suffix
+        id: desktop_suffix
+        shell: bash
+        run: |
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64|amd64) arch="x64" ;;
+            aarch64|arm64) arch="arm64" ;;
+          esac
+          case "$RUNNER_OS" in
+            Linux) os="linux" ;;
+            macOS) os="macos" ;;
+            Windows) os="windows" ;;
+            *) os="$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')" ;;
+          esac
+          echo "suffix=$os-$arch" >> "$GITHUB_OUTPUT"
+
+      - name: Build Desktop Jar
+        shell: bash
+        run: ./gradlew ${{ inputs.args }} :desktopApp:packageReleaseUberJarForCurrentOS
+
+      - name: Move desktop jar
+        shell: bash
+        run: |
+          mkdir -p desktopApp/build/upload
+          mv desktopApp/build/compose/jars/*-release.jar desktopApp/build/upload/zhihu++-desktop-${{ steps.desktop_suffix.outputs.suffix }}.jar
+
+      - name: Upload Desktop Jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhihu++-desktop-${{ steps.desktop_suffix.outputs.suffix }}
+          path: desktopApp/build/upload/zhihu++-desktop-${{ steps.desktop_suffix.outputs.suffix }}.jar
+
   build:
     name: Build Android App
+    needs: build-desktop
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -91,7 +146,7 @@ jobs:
           key: gradle-cache-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-      
+
       - name: Install Android NDK
         run: |
           echo "y" | sdkmanager --install "ndk;29.0.14206865"
@@ -117,6 +172,12 @@ jobs:
           mkdir -p app/build/upload
           mv app/build/outputs/apk/full/release/app-full-release.apk app/build/upload/zhihu++-full.apk
           mv app/build/outputs/apk/lite/release/app-lite-release.apk app/build/upload/zhihu++-lite.apk
+      - name: Download desktop jars
+        uses: actions/download-artifact@v4
+        with:
+          pattern: zhihu++-desktop-*
+          path: app/build/upload
+          merge-multiple: true
       - name: Compress lite mapping file
         if: ${{ inputs.minify }}
         run: |
@@ -132,12 +193,42 @@ jobs:
       # Delete existing nightly release
       - name: Delete existing nightly release
         if: ${{ inputs.minify && inputs.nightly_release }}
-        uses: dev-drprasad/delete-tag-and-release@v1.0
-        continue-on-error: true
+        uses: actions/github-script@v7
         with:
-          tag_name: nightly
-          github_token: ${{ github.token }}
-          delete_release: true
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tagName = 'nightly';
+
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner,
+              repo,
+              per_page: 100,
+            });
+
+            for (const release of releases.filter(r => r.tag_name === tagName)) {
+              core.info(`Deleting nightly release ${release.id} (${release.name || release.tag_name})`);
+              await github.rest.repos.deleteRelease({
+                owner,
+                repo,
+                release_id: release.id,
+              });
+            }
+
+            try {
+              await github.rest.git.deleteRef({
+                owner,
+                repo,
+                ref: `tags/${tagName}`,
+              });
+              core.info(`Deleted tag ${tagName}`);
+            } catch (error) {
+              if (error.status === 404) {
+                core.info(`Tag ${tagName} does not exist`);
+              } else {
+                throw error;
+              }
+            }
 
       # Generate nightly changelog
       - name: Generate nightly changelog
@@ -208,6 +299,7 @@ jobs:
             app/build/upload/zhihu++-lite.apk
             app/build/upload/mapping-lite.zip
             app/build/upload/zhihu++-full.apk
+            app/build/upload/zhihu++-desktop-*.jar
           fail_on_unmatched_files: true
           prerelease: true
       - name: Generate release notes
@@ -246,6 +338,6 @@ jobs:
             app/build/upload/zhihu++-lite.apk
             app/build/upload/mapping-lite.zip
             app/build/upload/zhihu++-full.apk
+            app/build/upload/zhihu++-desktop-*.jar
           fail_on_unmatched_files: true
           prerelease: false
-

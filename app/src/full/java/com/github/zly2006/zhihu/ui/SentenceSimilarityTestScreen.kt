@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -103,12 +103,6 @@ fun SentenceSimilarityTestScreen() {
                 Log.e("SentenceSimilarityTest", "Failed to load model", e)
                 computeError = e.localizedMessage ?: e.toString()
             }
-        }
-    }
-
-    fun unloadModel() {
-        coroutineScope.launch {
-            SentenceEmbeddingManager.unload()
         }
     }
 
@@ -225,7 +219,11 @@ fun SentenceSimilarityTestScreen() {
                         Text(if (isModelLoading) "加载中..." else "加载模型")
                     }
                     TextButton(
-                        onClick = { unloadModel() },
+                        onClick = {
+                            coroutineScope.launch {
+                                SentenceEmbeddingManager.unload()
+                            }
+                        },
                         enabled = isModelReady && !isComputing,
                     ) {
                         Text("卸载模型")

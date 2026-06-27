@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -29,12 +29,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.github.zly2006.zhihu.shared.notification.AndroidNotificationSettingsStore
+import com.github.zly2006.zhihu.shared.notification.NotificationType
 import com.github.zly2006.zhihu.test.MainActivityComposeRule
 import com.github.zly2006.zhihu.test.resetAppPreferences
 import com.github.zly2006.zhihu.test.setScreenContent
-import com.github.zly2006.zhihu.ui.NotificationPreferences
 import com.github.zly2006.zhihu.ui.NotificationSettingsScreen
-import com.github.zly2006.zhihu.ui.NotificationType
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
@@ -54,7 +54,7 @@ class NotificationSettingsScreenInstrumentedTest {
     @Test
     fun notificationSwitchesScrollAndPersistDeterministicallyAcrossForwardAndReversePasses() {
         // Start from cleared SharedPreferences so every row begins at its documented default value.
-        // This makes the assertions deterministic for all nine switches and prevents cross-test
+        // This makes the assertions deterministic for every switch and prevents cross-test
         // leakage from previous runs from changing the expected toggle target.
         val toggleCases = notificationToggleCases()
         toggleCases.forEach { toggleCase ->
@@ -137,15 +137,17 @@ class NotificationSettingsScreenInstrumentedTest {
         composeRule.waitUntil(timeoutMillis) { readPreference(toggleCase) == expected }
     }
 
+    private val settingsStore: AndroidNotificationSettingsStore
+        get() = AndroidNotificationSettingsStore(composeRule.activity)
+
     private fun readPreference(toggleCase: ToggleCase): Boolean = when (toggleCase.group) {
-        ToggleGroup.AutoMarkAsRead -> NotificationPreferences.getAutoMarkAsReadEnabled(composeRule.activity)
-        ToggleGroup.SystemNotification -> NotificationPreferences.getSystemNotificationEnabled(
-            composeRule.activity,
+        ToggleGroup.AutoMarkAsRead -> settingsStore.getAutoMarkAsReadEnabled()
+        ToggleGroup.UnreadBadge -> settingsStore.getUnreadBadgeEnabled()
+        ToggleGroup.SystemNotification -> settingsStore.getSystemNotificationEnabled(
             checkNotNull(toggleCase.type),
         )
 
-        ToggleGroup.DisplayInApp -> NotificationPreferences.getDisplayInAppEnabled(
-            composeRule.activity,
+        ToggleGroup.DisplayInApp -> settingsStore.getDisplayInAppEnabled(
             checkNotNull(toggleCase.type),
         )
     }
@@ -155,6 +157,15 @@ class NotificationSettingsScreenInstrumentedTest {
             ToggleCase(
                 title = "打开通知自动已读",
                 group = ToggleGroup.AutoMarkAsRead,
+                defaultValue = false,
+                labelOccurrenceCount = 1,
+                labelOccurrenceIndex = 0,
+            ),
+        )
+        add(
+            ToggleCase(
+                title = "显示未读红点",
+                group = ToggleGroup.UnreadBadge,
                 defaultValue = true,
                 labelOccurrenceCount = 1,
                 labelOccurrenceIndex = 0,
@@ -199,6 +210,7 @@ class NotificationSettingsScreenInstrumentedTest {
 
     private enum class ToggleGroup {
         AutoMarkAsRead,
+        UnreadBadge,
         SystemNotification,
         DisplayInApp,
     }
