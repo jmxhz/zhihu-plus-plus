@@ -19,9 +19,6 @@ package com.github.zly2006.zhihu.viewmodel.filter
 
 import androidx.room.Entity
 import androidx.room.Index
-import com.github.zly2006.zhihu.navigation.resolveContent
-import com.github.zly2006.zhihu.shared.data.OnlineHistoryItem
-import com.github.zly2006.zhihu.shared.filter.ContentOpenEventSupport
 
 @Entity(
     tableName = CloudReadHistoryRecord.TABLE_NAME,
@@ -41,31 +38,5 @@ data class CloudReadHistoryRecord(
 ) {
     companion object {
         const val TABLE_NAME = "cloud_read_history_records"
-
-        fun fromOnlineHistoryItem(
-            item: OnlineHistoryItem,
-            syncedAt: Long,
-        ): CloudReadHistoryRecord? {
-            val extra = item.data.extra
-            val extraType = extra.contentType.trim().lowercase()
-            val extraToken = extra.contentToken.trim()
-            val identity = if (extraType.isNotBlank() && extraToken.isNotBlank()) {
-                extraType to extraToken
-            } else {
-                resolveContent(item.data.action.url)
-                    ?.let(ContentOpenEventSupport::toTrackedContentIdentity)
-                    ?.let { it.type to it.id }
-            } ?: return null
-
-            return CloudReadHistoryRecord(
-                contentType = identity.first,
-                contentId = identity.second,
-                questionId = extra.questionToken.trim().ifBlank { null },
-                actionUrl = item.data.action.url
-                    .ifBlank { null },
-                readTime = extra.readTime,
-                syncedAt = syncedAt,
-            )
-        }
     }
 }

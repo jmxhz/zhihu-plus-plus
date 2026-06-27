@@ -17,8 +17,10 @@
 
 package com.github.zly2006.zhihu.viewmodel.filter
 
+import com.github.zly2006.zhihu.navigation.resolveContent
+import com.github.zly2006.zhihu.shared.data.OnlineHistoryItem
 import com.github.zly2006.zhihu.shared.data.OnlineHistoryPage
-import com.github.zly2006.zhihu.shared.data.zhihuOnlineHistoryUrl
+import com.github.zly2006.zhihu.shared.filter.ContentOpenEventSupport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -34,6 +36,9 @@ private const val CLOUD_READ_HISTORY_FULL_PAGE_SIZE = 50
 private const val CLOUD_READ_HISTORY_FALLBACK_PAGE_SIZE = 10
 private const val CLOUD_READ_HISTORY_FULL_SYNC_INTERVAL_MS = 60 * 60 * 1000L
 private const val CLOUD_READ_HISTORY_RETRY_INTERVAL_MS = 5 * 60 * 1000L
+
+private fun zhihuOnlineHistoryUrl(limit: Int): String =
+    "https://api.zhihu.com/unify-consumption/read_history?offset=0&limit=$limit"
 
 class CloudReadHistorySyncer(
     private val database: ContentFilterDatabase,
@@ -123,7 +128,7 @@ class CloudReadHistorySyncer(
             val page = fetchPageWithFallback(currentUrl, currentUrl == firstFullPageUrl)
             val syncedAt = nowMillis()
             val records = page.data.mapNotNull { item ->
-                CloudReadHistoryRecord.fromOnlineHistoryItem(item, syncedAt)
+                cloudReadHistoryRecordFromOnlineHistoryItem(item, syncedAt)
             }
             if (records.isNotEmpty()) {
                 dao.upsertRecords(records)
@@ -159,4 +164,29 @@ class CloudReadHistorySyncer(
         }
         fetchPage(zhihuOnlineHistoryUrl(limit = CLOUD_READ_HISTORY_FALLBACK_PAGE_SIZE))
     }
+}
+
+private fun cloudReadHistoryRecordFromOnlineHistoryItem(
+    item: OnlineHistoryItem,
+    syncedAt: Long,
+): CloudReadHistoryRecord? {
+    val extra = item.data.extra
+    val extraType = extra.contentType.trim().lowercase()
+    val extraToken = extra.contentToken.trim()
+    val identity = if (extraType.isNotBlank() && extraToken.isNotBlank()) {
+        extraType to extraToken
+    } else {
+        resolveContent(item.data.action.url)
+            ?.let(ContentOpenEventSupport::toTrackedContentIdentity)
+            ?.let { it.type to it.id }
+    } ?: return null
+
+    return CloudReadHistoryRecord(
+        contentType = identity.first,
+        contentId = identity.second,
+        questionId = extra.questionToken.trim().ifBlank { null },
+        actionUrl = item.data.action.url.ifBlank { null },
+        readTime = extra.readTime,
+        syncedAt = syncedAt,
+    )
 }
