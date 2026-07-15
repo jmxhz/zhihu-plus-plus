@@ -24,7 +24,6 @@ import com.github.zly2006.zhihu.shared.data.OnlineHistoryHeader
 import com.github.zly2006.zhihu.shared.data.OnlineHistoryItem
 import com.github.zly2006.zhihu.shared.data.OnlineHistoryPage
 import com.github.zly2006.zhihu.shared.data.ZhihuPaging
-import com.github.zly2006.zhihu.shared.data.zhihuOnlineHistoryUrl
 import com.github.zly2006.zhihu.shared.filter.ContentOpenEventSupport
 import kotlinx.coroutines.test.runTest
 import kotlin.io.path.createTempDirectory

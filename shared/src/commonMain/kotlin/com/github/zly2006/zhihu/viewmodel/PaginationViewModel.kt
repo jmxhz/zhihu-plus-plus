@@ -81,6 +81,7 @@ abstract class PaginationViewModel<T : Any>(
         protected set
     var allowGuestAccess = false
     protected var lastPaging: ZhihuPaging? by mutableStateOf(null)
+    protected var lastFetchFailed = false
     open val isEnd: Boolean get() = lastPaging?.isEnd == true
     protected abstract val initialUrl: String
     private var currentJob: Job? = null
@@ -100,6 +101,7 @@ abstract class PaginationViewModel<T : Any>(
         debugData.clear()
         allData.clear()
         lastPaging = null // 重置 lastPaging
+        lastFetchFailed = false
         loadMore(environment)
     }
 
@@ -109,6 +111,7 @@ abstract class PaginationViewModel<T : Any>(
     }
 
     protected open suspend fun fetchFeeds(environment: PaginationEnvironment) {
+        lastFetchFailed = false
         try {
             val url = lastPaging?.next ?: initialUrl
 
@@ -145,6 +148,7 @@ abstract class PaginationViewModel<T : Any>(
             }
         } catch (e: Exception) {
             if (e is kotlin.coroutines.cancellation.CancellationException) throw e
+            lastFetchFailed = true
             environment.handleFetchFailure(this::class.simpleName, e)
         } finally {
             isLoading = false
@@ -479,7 +483,11 @@ interface PaginationEnvironment :
     ClipboardEnvironment,
     ProfileLoadEnvironment,
     ArticleLoadEnvironment,
-    ArticleExportContentEnvironment
+    ArticleExportContentEnvironment {
+    suspend fun homeFeedReadContentKeys(): Set<String> = emptySet()
+
+    fun scheduleCloudReadHistorySync() = Unit
+}
 
 data class FeedDisplaySettings(
     val enableQualityFilter: Boolean = true,

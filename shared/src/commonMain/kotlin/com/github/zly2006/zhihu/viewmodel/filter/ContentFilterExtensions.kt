@@ -34,13 +34,29 @@ class ForegroundReadFilterPipeline(
     private val settings: FeedFilterSettings,
     private val contentFilterManager: ContentFilterManager,
     private val blockedFeedRecordDao: BlockedFeedRecordDao,
+    private val contentOpenEventDao: ContentOpenEventDao,
+    private val cloudReadHistoryDao: CloudReadHistoryDao,
 ) {
-    suspend fun filter(items: List<FeedDisplayItem>): List<FeedDisplayItem> {
+    suspend fun filter(
+        items: List<FeedDisplayItem>,
+        extraReadContentKeys: Set<String> = emptySet(),
+    ): List<FeedDisplayItem> {
         if (settings.reverseBlock || !settings.enableContentFilter) {
             return items
         }
+        if (items.isEmpty()) return items
 
         val itemIdentityPairs = items.map { item -> item to item.resolveContentIdentity() }
+        val contentKeys = itemIdentityPairs.map { (_, identity) ->
+            ContentOpenEventSupport.buildContentKey(identity.type, identity.id)
+        }
+        val openedContentKeys = contentOpenEventDao
+            .getOpenedContentKeysByKeys(contentKeys)
+            .toSet() +
+            cloudReadHistoryDao
+                .getReadContentKeysByKeys(contentKeys)
+                .toSet() +
+            extraReadContentKeys
         val viewedContentIds = contentFilterManager.getAlreadyViewedContentIds(
             itemIdentityPairs.map { (_, identity) -> identity.type to identity.id },
         )
@@ -49,6 +65,8 @@ class ForegroundReadFilterPipeline(
         val blockedItems = mutableListOf<Pair<FilterableContent, String>>()
 
         itemIdentityPairs.forEach { (item, identity) ->
+            val contentKey = ContentOpenEventSupport.buildContentKey(identity.type, identity.id)
+            val isOpenedContent = contentKey in openedContentKeys
             val isViewed = ContentViewRecord.generateId(identity.type, identity.id) in viewedContentIds
             val isFollowing = item.feed
                 ?.target
@@ -56,7 +74,11 @@ class ForegroundReadFilterPipeline(
                 ?.isFollowing ?: false
             val isLowQualityAndroidFeed = isLowQualityForegroundFeed(item)
 
-            if (isFollowing || (!isViewed && !isLowQualityAndroidFeed)) {
+            if (isOpenedContent) {
+                blockedItems.add(
+                    item.toFilterableContent(identity, DataHolder.DummyContent) to identity.readBlockReason(),
+                )
+            } else if (isFollowing || (!isViewed && !isLowQualityAndroidFeed)) {
                 keptItems.add(item)
                 contentFilterManager.recordContentView(identity.type, identity.id)
             } else {
@@ -72,6 +94,14 @@ class ForegroundReadFilterPipeline(
 
         return keptItems
     }
+}
+
+private fun FeedContentIdentity.readBlockReason(): String = when (type) {
+    ContentType.ANSWER -> "已阅读过回答"
+    ContentType.ARTICLE -> "已阅读过文章"
+    ContentType.PIN -> "已阅读过想法"
+    ContentType.QUESTION -> "已阅读过问题"
+    else -> "已阅读过内容"
 }
 
 private fun isLowQualityForegroundFeed(item: FeedDisplayItem): Boolean =

@@ -35,6 +35,8 @@ class MixedHomeFeedViewModel :
     val web = HomeFeedViewModel()
     override val initialUrl: String
         get() = "https://api.zhihu.com/topstory/recommend"
+    override val isEnd: Boolean
+        get() = android.isEnd && web.isEnd
 
     init {
         android.displayItems = this.displayItems
@@ -43,12 +45,24 @@ class MixedHomeFeedViewModel :
 
     override suspend fun fetchFeeds(environment: PaginationEnvironment) {
         coroutineScope {
-            listOf(
-                async { android.fetchFeeds(environment) },
-                async { web.fetchFeeds(environment) },
+            listOfNotNull(
+                if (!android.isEnd) async { android.fetchFeeds(environment) } else null,
+                if (!web.isEnd) async { web.fetchFeeds(environment) } else null,
             ).joinAll()
         }
         isLoading = false
+    }
+
+    override fun refresh(environment: PaginationEnvironment) {
+        android.resetCompositeSource()
+        web.resetCompositeSource()
+        super.refresh(environment)
+    }
+
+    override suspend fun pullToRefresh(environment: PaginationEnvironment) {
+        android.resetCompositeSource()
+        web.resetCompositeSource()
+        super.pullToRefresh(environment)
     }
 
     override suspend fun recordContentInteraction(environment: ContentInteractionEnvironment, feed: Feed) {

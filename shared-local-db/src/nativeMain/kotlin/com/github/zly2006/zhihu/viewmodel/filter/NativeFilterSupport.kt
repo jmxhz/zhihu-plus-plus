@@ -36,6 +36,8 @@ private val emptyContentFilterDatabase = object : ContentFilterDatabase() {
 
     override fun contentOpenEventDao(): ContentOpenEventDao = emptyContentOpenEventDao
 
+    override fun cloudReadHistoryDao(): CloudReadHistoryDao = emptyCloudReadHistoryDao
+
     override fun blockedKeywordDao(): BlockedKeywordDao = emptyBlockedKeywordDao
 
     override fun blockedUserDao(): BlockedUserDao = emptyBlockedUserDao
@@ -71,6 +73,20 @@ private val emptyContentOpenEventDao = object : ContentOpenEventDao {
     override suspend fun insert(event: ContentOpenEvent): Long = 0L
 
     override suspend fun getOpenedContentKeysByKeys(keys: List<String>): List<String> = emptyList()
+}
+
+private val emptyCloudReadHistoryDao = object : CloudReadHistoryDao {
+    override suspend fun upsertRecords(records: List<CloudReadHistoryRecord>) = Unit
+
+    override suspend fun getReadContentKeysByKeys(keys: List<String>): List<String> = emptyList()
+
+    override suspend fun getRecord(contentType: String, contentId: String): CloudReadHistoryRecord? = null
+
+    override suspend fun upsertSyncState(state: CloudReadHistorySyncState) = Unit
+
+    override suspend fun getSyncState(syncKey: String): CloudReadHistorySyncState? = null
+
+    override suspend fun getRecordCount(): Int = 0
 }
 
 private val emptyBlockedKeywordDao = object : BlockedKeywordDao {

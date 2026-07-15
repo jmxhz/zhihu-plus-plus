@@ -24,6 +24,7 @@ import com.github.zly2006.zhihu.navigation.NavDestination
 import com.github.zly2006.zhihu.shared.data.DataHolder
 import com.github.zly2006.zhihu.shared.data.Feed
 import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
+import com.github.zly2006.zhihu.shared.data.ZhihuJson
 import com.github.zly2006.zhihu.shared.data.navDestination
 import com.github.zly2006.zhihu.shared.data.target
 import com.github.zly2006.zhihu.shared.desktop.DesktopAccountStore
@@ -44,6 +45,8 @@ import com.github.zly2006.zhihu.util.buildCollectionExportZipFileName
 import com.github.zly2006.zhihu.util.sanitizeArticleExportFileNamePart
 import com.github.zly2006.zhihu.viewmodel.filter.BlockedKeywordService
 import com.github.zly2006.zhihu.viewmodel.filter.BlockedUser
+import com.github.zly2006.zhihu.viewmodel.filter.CLOUD_READ_HISTORY_INCLUDE
+import com.github.zly2006.zhihu.viewmodel.filter.CloudReadHistorySyncer
 import com.github.zly2006.zhihu.viewmodel.filter.ContentDetailProvider
 import com.github.zly2006.zhihu.viewmodel.filter.ContentFilterManager
 import com.github.zly2006.zhihu.viewmodel.filter.ContentType
@@ -59,7 +62,9 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.setBody
 import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
@@ -122,6 +127,20 @@ class DesktopPaginationEnvironment(
     private val historyStorage = DesktopHistoryStorage()
     private val contentFilterDb = desktopContentFilterDb
     private val localRecommendationEngine by lazy { createLocalRecommendationEngine() }
+    private val cloudReadHistorySyncScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val cloudReadHistorySyncer by lazy {
+        CloudReadHistorySyncer(
+            database = contentFilterDb,
+            fetchPage = { url ->
+                val response = fetchJson(url, CLOUD_READ_HISTORY_INCLUDE)
+                    ?: error("Empty online history response")
+                ZhihuJson.decodeJson(response)
+            },
+            onFailure = { error ->
+                Log.w("CloudReadHistorySyncer", "Failed to sync cloud read history", error)
+            },
+        )
+    }
 
     override fun httpClient(): HttpClient = store.httpClient()
 
@@ -148,6 +167,14 @@ class DesktopPaginationEnvironment(
 
     override fun localHistory(): List<NavDestination> =
         historyStorage.history
+
+    override suspend fun homeFeedReadContentKeys(): Set<String> =
+        ContentOpenEventSupport.trackedContentKeysFromDestinations(localHistory())
+
+    override fun scheduleCloudReadHistorySync() {
+        if (authenticatedCookies()["d_c0"] == null) return
+        cloudReadHistorySyncer.startSyncIfNeeded(cloudReadHistorySyncScope)
+    }
 
     override fun articleAnswerSwitchState(): ArticleAnswerSwitchState? = desktopArticleAnswerSwitchState
 
@@ -219,11 +246,19 @@ class DesktopPaginationEnvironment(
 
     override suspend fun applyHomeFeedFilters(items: List<FeedDisplayItem>): HomeFeedFilterResult {
         val settings = settingsStore.toFeedFilterSettings()
+        val readContentKeys = if (settings.reverseBlock || !settings.enableContentFilter) {
+            emptySet()
+        } else {
+            scheduleCloudReadHistorySync()
+            homeFeedReadContentKeys()
+        }
         val foregroundItems = ForegroundReadFilterPipeline(
             settings = settings,
             contentFilterManager = ContentFilterManager(contentFilterDb.contentFilterDao()),
             blockedFeedRecordDao = contentFilterDb.blockedFeedRecordDao(),
-        ).filter(items)
+            contentOpenEventDao = contentFilterDb.contentOpenEventDao(),
+            cloudReadHistoryDao = contentFilterDb.cloudReadHistoryDao(),
+        ).filter(items, readContentKeys)
         val filteredItems = FeedDisplayFilterPipeline(
             settings = settings,
             contentDetailProvider = ContentDetailProvider(::getOrFetchContentDetail),

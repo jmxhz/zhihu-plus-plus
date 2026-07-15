@@ -28,6 +28,7 @@ import com.github.zly2006.zhihu.viewmodel.FeedDisplayEnvironment
 import com.github.zly2006.zhihu.viewmodel.HomeFeedFilterResult
 import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.PaginationViewModel
+import com.github.zly2006.zhihu.viewmodel.filter.resolveContentIdentity
 import kotlinx.serialization.json.JsonArray
 import kotlin.reflect.typeOf
 
@@ -74,10 +75,22 @@ abstract class BaseFeedViewModel : PaginationViewModel<Feed>(typeOf<Feed>()) {
 
     fun addDisplayItems(newItems: List<FeedDisplayItem>) {
         newItems.forEach {
-            if (displayItems.none { existing -> existing.stableKey == it.stableKey }) {
+            if (displayItems.none { existing -> displayItemKey(existing) == displayItemKey(it) }) {
                 displayItems.add(it)
             }
         }
+    }
+
+    protected open fun displayItemKey(item: FeedDisplayItem): String = item.stableKey
+
+    internal fun resetCompositeSource() {
+        displayItems.clear()
+        errorMessage = null
+        debugData.clear()
+        allData.clear()
+        lastPaging = null
+        lastFetchFailed = false
+        isLoading = false
     }
 
     // TODO: handleBlockUser - 需要 UserMessageSink 支持
@@ -123,17 +136,17 @@ abstract class BaseFeedViewModel : PaginationViewModel<Feed>(typeOf<Feed>()) {
 internal fun MutableList<FeedDisplayItem>.replaceHomeFeedItemsWithFilteredResult(filterResult: HomeFeedFilterResult) {
     if (filterResult.reverseBlock) return
 
-    val foregroundKeys = filterResult.foregroundItems.map { it.stableKey }.toSet()
-    val filteredItemsByKey = filterResult.filteredItems.associateBy { it.stableKey }
+    val foregroundKeys = filterResult.foregroundItems.map { it.homeFeedContentKey }.toSet()
+    val filteredItemsByKey = filterResult.filteredItems.associateBy { it.homeFeedContentKey }
     var index = 0
     while (index < size) {
         val item = this[index]
-        if (item.stableKey !in foregroundKeys) {
+        if (item.homeFeedContentKey !in foregroundKeys) {
             index++
             continue
         }
 
-        val filteredVersion = filteredItemsByKey[item.stableKey]
+        val filteredVersion = filteredItemsByKey[item.homeFeedContentKey]
         if (filteredVersion == null) {
             removeAt(index)
         } else {
@@ -142,3 +155,17 @@ internal fun MutableList<FeedDisplayItem>.replaceHomeFeedItemsWithFilteredResult
         }
     }
 }
+
+internal val FeedDisplayItem.homeFeedContentKey: String
+    get() = resolveContentIdentity().let { identity ->
+        if (identity.type == "unknown") stableKey else "${identity.type}:${identity.id}"
+    }
+
+internal fun shouldContinueHomeFeedAfterPage(
+    pagesFetched: Int,
+    producedVisibleItems: Boolean,
+    isEnd: Boolean,
+    failed: Boolean,
+): Boolean = pagesFetched < MAX_EMPTY_HOME_FEED_PAGES && !producedVisibleItems && !isEnd && !failed
+
+private const val MAX_EMPTY_HOME_FEED_PAGES = 3

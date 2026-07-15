@@ -25,6 +25,7 @@ import com.github.zly2006.zhihu.viewmodel.LocalRecommendationEnvironment
 import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.feed.BaseFeedViewModel
 import com.github.zly2006.zhihu.viewmodel.feed.HomeFeedInteractionViewModel
+import com.github.zly2006.zhihu.viewmodel.feed.homeFeedContentKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -38,6 +39,8 @@ class LocalHomeFeedViewModel :
     override val initialUrl: String
         get() = error("LocalHomeFeedViewModel should not be used directly. Use LocalFeedViewModel instead.")
 
+    override fun displayItemKey(item: FeedDisplayItem): String = item.homeFeedContentKey
+
     override fun loadMore(environment: PaginationEnvironment) {
         if (displayItems.isEmpty()) {
             super.loadMore(environment)
@@ -47,12 +50,29 @@ class LocalHomeFeedViewModel :
     override suspend fun fetchFeeds(environment: PaginationEnvironment) {
         try {
             val engine = ensureEngine(environment)
-            val recommendations = engine.generateRecommendations(20)
-
-            if (recommendations.isEmpty()) {
+            var remainingBatches = MAX_LOCAL_RECOMMENDATION_BATCHES
+            while (remainingBatches-- > 0) {
+                val recommendations = engine.generateRecommendations(LOCAL_RECOMMENDATION_BATCH_SIZE)
+                if (recommendations.isEmpty()) break
+                val candidates = recommendations
+                    .map(::createLocalFeedDisplayItem)
+                    .filter { candidate ->
+                        displayItems.none { existing -> existing.homeFeedContentKey == candidate.homeFeedContentKey }
+                    }
+                if (candidates.isEmpty()) continue
+                val filterResult = environment.applyHomeFeedFilters(candidates)
+                val visibleItems = if (filterResult.reverseBlock) {
+                    filterResult.filteredItems
+                } else {
+                    filterResult.filteredItems.filterNot { it.isFiltered }
+                }
+                if (visibleItems.isNotEmpty()) {
+                    addDisplayItems(visibleItems)
+                    break
+                }
+            }
+            if (displayItems.isEmpty()) {
                 generateFallbackContent()
-            } else {
-                addDisplayItems(recommendations.map(::createLocalFeedDisplayItem))
             }
         } catch (e: Exception) {
             environment.handleLocalRecommendationFailure(e)
@@ -139,3 +159,6 @@ class LocalHomeFeedViewModel :
 
     override fun onUiContentClick(environment: ContentInteractionEnvironment, feed: Feed, item: FeedDisplayItem) = Unit
 }
+
+private const val LOCAL_RECOMMENDATION_BATCH_SIZE = 20
+private const val MAX_LOCAL_RECOMMENDATION_BATCHES = 4

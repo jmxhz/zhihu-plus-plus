@@ -46,6 +46,7 @@ import com.github.zly2006.zhihu.shared.data.DataHolder
 import com.github.zly2006.zhihu.shared.data.Feed
 import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
 import com.github.zly2006.zhihu.shared.data.ZhihuCookieStorage
+import com.github.zly2006.zhihu.shared.data.ZhihuJson
 import com.github.zly2006.zhihu.shared.data.ZhihuJson.json
 import com.github.zly2006.zhihu.shared.data.navDestination
 import com.github.zly2006.zhihu.shared.data.target
@@ -64,6 +65,8 @@ import com.github.zly2006.zhihu.util.saveBitmapToGallery
 import com.github.zly2006.zhihu.viewmodel.filter.AndroidContentFilterRuntime
 import com.github.zly2006.zhihu.viewmodel.filter.BlockedKeywordService
 import com.github.zly2006.zhihu.viewmodel.filter.BlockedUser
+import com.github.zly2006.zhihu.viewmodel.filter.CLOUD_READ_HISTORY_INCLUDE
+import com.github.zly2006.zhihu.viewmodel.filter.CloudReadHistorySyncer
 import com.github.zly2006.zhihu.viewmodel.filter.ContentFilterManager
 import com.github.zly2006.zhihu.viewmodel.filter.ContentType
 import com.github.zly2006.zhihu.viewmodel.filter.FeedContentFilterPipeline
@@ -82,7 +85,9 @@ import io.ktor.client.request.setBody
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.util.appendAll
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -118,6 +123,20 @@ open class SharedAndroidPaginationEnvironment(
     private val localRecommendationEngine by lazy { LocalRecommendationEngine(context) }
     private val settingsStore by lazy { androidSettingsStore(context) }
     private val userMessageSink by lazy { androidUserMessageSink(context) }
+    private val cloudReadHistorySyncScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val cloudReadHistorySyncer by lazy {
+        CloudReadHistorySyncer(
+            database = getContentFilterDatabase(context),
+            fetchPage = { url ->
+                val response = fetchJson(url, CLOUD_READ_HISTORY_INCLUDE)
+                    ?: error("Empty online history response")
+                ZhihuJson.decodeJson(response)
+            },
+            onFailure = { error ->
+                Log.w("CloudReadHistorySyncer", "Failed to sync cloud read history", error)
+            },
+        )
+    }
     private val aigcVoteHttpClient by lazy {
         HttpClient {
             install(ContentNegotiation) {
@@ -241,6 +260,14 @@ open class SharedAndroidPaginationEnvironment(
 
     override fun localHistory(): List<NavDestination> = HistoryStorage(context).history
 
+    override suspend fun homeFeedReadContentKeys(): Set<String> =
+        ContentOpenEventSupport.trackedContentKeysFromDestinations(localHistory())
+
+    override fun scheduleCloudReadHistorySync() {
+        if (authenticatedCookies()["d_c0"] == null) return
+        cloudReadHistorySyncer.startSyncIfNeeded(cloudReadHistorySyncScope)
+    }
+
     override suspend fun postHistoryDestination(destination: NavDestination) {
         HistoryStorage(context).add(destination)
     }
@@ -309,11 +336,19 @@ open class SharedAndroidPaginationEnvironment(
         val settings = feedDisplaySettings()
         val filterSettings = context.contentFilterSettings()
         val filterDatabase = getContentFilterDatabase(context)
+        val readContentKeys = if (filterSettings.reverseBlock || !filterSettings.enableContentFilter) {
+            emptySet()
+        } else {
+            scheduleCloudReadHistorySync()
+            homeFeedReadContentKeys()
+        }
         val foregroundItems = ForegroundReadFilterPipeline(
             settings = filterSettings,
             contentFilterManager = ContentFilterManager(filterDatabase.contentFilterDao()),
             blockedFeedRecordDao = filterDatabase.blockedFeedRecordDao(),
-        ).filter(items)
+            contentOpenEventDao = filterDatabase.contentOpenEventDao(),
+            cloudReadHistoryDao = filterDatabase.cloudReadHistoryDao(),
+        ).filter(items, readContentKeys)
         val filteredItems = FeedDisplayFilterPipeline(
             settings = filterSettings,
             contentDetailProvider = this::getOrFetchContentDetail,

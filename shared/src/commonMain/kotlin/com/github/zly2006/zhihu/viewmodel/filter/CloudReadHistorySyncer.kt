@@ -37,7 +37,7 @@ private const val CLOUD_READ_HISTORY_FALLBACK_PAGE_SIZE = 10
 private const val CLOUD_READ_HISTORY_FULL_SYNC_INTERVAL_MS = 60 * 60 * 1000L
 private const val CLOUD_READ_HISTORY_RETRY_INTERVAL_MS = 5 * 60 * 1000L
 
-private fun zhihuOnlineHistoryUrl(limit: Int): String =
+internal fun zhihuOnlineHistoryUrl(limit: Int): String =
     "https://api.zhihu.com/unify-consumption/read_history?offset=0&limit=$limit"
 
 class CloudReadHistorySyncer(
@@ -86,12 +86,6 @@ class CloudReadHistorySyncer(
                 },
             )
         }
-    }
-
-    suspend fun clearCache() {
-        val dao = database.cloudReadHistoryDao()
-        dao.clearRecords()
-        dao.clearSyncState()
     }
 
     private suspend fun shouldSync(): Boolean {
@@ -185,7 +179,8 @@ private fun cloudReadHistoryRecordFromOnlineHistoryItem(
         contentType = identity.first,
         contentId = identity.second,
         questionId = extra.questionToken.trim().ifBlank { null },
-        actionUrl = item.data.action.url.ifBlank { null },
+        actionUrl = item.data.action.url
+            .ifBlank { null },
         readTime = extra.readTime,
         syncedAt = syncedAt,
     )

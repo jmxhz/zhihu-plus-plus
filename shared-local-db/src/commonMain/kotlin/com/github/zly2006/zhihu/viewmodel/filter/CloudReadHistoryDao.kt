@@ -39,17 +39,11 @@ interface CloudReadHistoryDao {
     @Query("SELECT * FROM ${CloudReadHistoryRecord.TABLE_NAME} WHERE contentType = :contentType AND contentId = :contentId")
     suspend fun getRecord(contentType: String, contentId: String): CloudReadHistoryRecord?
 
-    @Query("DELETE FROM ${CloudReadHistoryRecord.TABLE_NAME}")
-    suspend fun clearRecords()
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSyncState(state: CloudReadHistorySyncState)
 
     @Query("SELECT * FROM ${CloudReadHistorySyncState.TABLE_NAME} WHERE syncKey = :syncKey")
     suspend fun getSyncState(syncKey: String): CloudReadHistorySyncState?
-
-    @Query("DELETE FROM ${CloudReadHistorySyncState.TABLE_NAME}")
-    suspend fun clearSyncState()
 
     @Query("SELECT COUNT(*) FROM ${CloudReadHistoryRecord.TABLE_NAME}")
     suspend fun getRecordCount(): Int

@@ -28,7 +28,9 @@ import com.github.zly2006.zhihu.viewmodel.ContentInteractionEnvironment
 import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.feed.BaseFeedViewModel
 import com.github.zly2006.zhihu.viewmodel.feed.HomeFeedInteractionViewModel
+import com.github.zly2006.zhihu.viewmodel.feed.homeFeedContentKey
 import com.github.zly2006.zhihu.viewmodel.feed.replaceHomeFeedItemsWithFilteredResult
+import com.github.zly2006.zhihu.viewmodel.feed.shouldContinueHomeFeedAfterPage
 import com.github.zly2006.zhihu.viewmodel.postSigned
 import io.ktor.client.call.body
 import io.ktor.client.request.forms.MultiPartFormDataContent
@@ -55,50 +57,23 @@ class AndroidHomeFeedViewModel :
     override val initialUrl: String
         get() = "https://api.zhihu.com/topstory/recommend"
 
+    override fun displayItemKey(item: FeedDisplayItem): String = item.homeFeedContentKey
+
     public override suspend fun fetchFeeds(environment: PaginationEnvironment) {
         try {
-            val response = environment.mobileHomeFeedHttpClient().get(lastPaging?.next ?: initialUrl)
-            if (response.status.isSuccess()) {
-                val jojo = response.body<JsonObject>()
-                val data = jojo["data"]?.jsonArray ?: throw IllegalStateException("No data found in response")
-
-                // 收集所有待显示的项目
-                val itemsToDisplay = mutableListOf<FeedDisplayItem>()
-
-                data
-                    .map { it.jsonObject }
-                    .forEach { card ->
-                        try {
-                            val displayItem = parseMobileHomeFeedDisplayItem(card) ?: return@forEach
-                            itemsToDisplay.add(displayItem)
-                        } catch (e: Exception) {
-                            environment.logDecodeFailure("AndroidHomeFeedViewModel", card, e)
-                        }
-                    }
-
-                // 前台先做本地已读过滤，再立即展示
-                val filterResult = environment.applyHomeFeedFilters(itemsToDisplay)
-                if (!filterResult.reverseBlock) {
-                    withContext(Dispatchers.Main) {
-                        addDisplayItems(filterResult.foregroundItems)
-                    }
-                }
-
-                if (filterResult.reverseBlock) {
-                    addDisplayItems(filterResult.filteredItems)
-                }
-
-                // 移除被过滤的条目，并更新已保留条目的 raw 内容
-                withContext(Dispatchers.Main) {
-                    displayItems.replaceHomeFeedItemsWithFilteredResult(filterResult)
-                }
-
-                lastPaging = if ("paging" in jojo) {
-                    ZhihuJson.decodeJson(jojo["paging"]!!)
-                } else {
-                    null
-                }
-            }
+            var pagesFetched = 0
+            var producedVisibleItems: Boolean
+            do {
+                producedVisibleItems = fetchPage(environment)
+                pagesFetched++
+            } while (
+                shouldContinueHomeFeedAfterPage(
+                    pagesFetched = pagesFetched,
+                    producedVisibleItems = producedVisibleItems,
+                    isEnd = isEnd,
+                    failed = false,
+                )
+            )
         } catch (e: Exception) {
             if (e !is CancellationException) {
                 environment.handleMobileHomeFeedFailure(e)
@@ -107,6 +82,54 @@ class AndroidHomeFeedViewModel :
         } finally {
             isLoading = false
         }
+    }
+
+    private suspend fun fetchPage(environment: PaginationEnvironment): Boolean {
+        val response = environment.mobileHomeFeedHttpClient().get(lastPaging?.next ?: initialUrl)
+        if (!response.status.isSuccess()) {
+            throw IllegalStateException("Android home feed request failed with status ${response.status}")
+        }
+        val jojo = response.body<JsonObject>()
+        val data = jojo["data"]?.jsonArray ?: throw IllegalStateException("No data found in response")
+
+        // 收集所有待显示的项目
+        val itemsToDisplay = mutableListOf<FeedDisplayItem>()
+
+        data
+            .map { it.jsonObject }
+            .forEach { card ->
+                try {
+                    val displayItem = parseMobileHomeFeedDisplayItem(card) ?: return@forEach
+                    itemsToDisplay.add(displayItem)
+                } catch (e: Exception) {
+                    environment.logDecodeFailure("AndroidHomeFeedViewModel", card, e)
+                }
+            }
+
+        // 前台先做本地已读过滤，再立即展示
+        val existingKeys = displayItems.mapTo(hashSetOf()) { it.homeFeedContentKey }
+        val filterResult = environment.applyHomeFeedFilters(itemsToDisplay)
+        if (!filterResult.reverseBlock) {
+            withContext(Dispatchers.Main) {
+                addDisplayItems(filterResult.foregroundItems)
+            }
+        }
+
+        if (filterResult.reverseBlock) {
+            addDisplayItems(filterResult.filteredItems)
+        }
+
+        // 移除被过滤的条目，并更新已保留条目的 raw 内容
+        withContext(Dispatchers.Main) {
+            displayItems.replaceHomeFeedItemsWithFilteredResult(filterResult)
+        }
+
+        lastPaging = if ("paging" in jojo) {
+            ZhihuJson.decodeJson(jojo["paging"]!!)
+        } else {
+            null
+        }
+        return filterResult.filteredItems.any { it.homeFeedContentKey !in existingKeys }
     }
 
     override suspend fun recordContentInteraction(environment: ContentInteractionEnvironment, feed: Feed) {

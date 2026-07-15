@@ -105,7 +105,8 @@ class ForegroundReadFilterPipelineTest {
             listOf("已阅读过回答"),
             fixture.database
                 .blockedFeedRecordDao()
-                .getRecent()
+                .observeAll()
+                .first()
                 .map { it.blockedReason },
         )
         fixture.database.close()
@@ -138,7 +139,8 @@ class ForegroundReadFilterPipelineTest {
             setOf("已阅读过文章", "已阅读过想法", "已阅读过问题"),
             fixture.database
                 .blockedFeedRecordDao()
-                .getRecent()
+                .observeAll()
+                .first()
                 .map { it.blockedReason }
                 .toSet(),
         )

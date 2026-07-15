@@ -39,6 +39,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -115,6 +116,8 @@ class HomeFeedViewModel :
     BaseFeedViewModel(),
     HomeFeedInteractionViewModel {
     private val reportedTouchedItems = hashSetOf<Pair<String, String>>()
+    private var filterJob: Job? = null
+    private var lastPageProducedVisibleItems = false
 
     override val initialUrl: String
 //        get() = "https://www.zhihu.com/api/v3/feed/topstory/recommend?desktop=true&limit=10"
@@ -124,9 +127,24 @@ class HomeFeedViewModel :
         allowGuestAccess = true
     }
 
+    override fun displayItemKey(item: FeedDisplayItem): String = item.homeFeedContentKey
+
     public override suspend fun fetchFeeds(environment: PaginationEnvironment) {
         markItemsAsTouched(environment)
-        super.fetchFeeds(environment)
+        var pagesFetched = 0
+        do {
+            lastPageProducedVisibleItems = false
+            super.fetchFeeds(environment)
+            filterJob?.join()
+            pagesFetched++
+        } while (
+            shouldContinueHomeFeedAfterPage(
+                pagesFetched = pagesFetched,
+                producedVisibleItems = lastPageProducedVisibleItems,
+                isEnd = isEnd,
+                failed = lastFetchFailed,
+            )
+        )
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -134,7 +152,8 @@ class HomeFeedViewModel :
         allData.addAll(data)
         debugData.addAll(rawData)
 
-        viewModelScope.launch {
+        filterJob = viewModelScope.launch {
+            val existingKeys = displayItems.mapTo(hashSetOf()) { it.homeFeedContentKey }
             val newItems = data
                 .flattenFeeds()
                 .map { feed -> createDisplayItem(environment, feed) }
@@ -153,6 +172,9 @@ class HomeFeedViewModel :
             // 移除被过滤的条目，并更新已保留条目的 raw 内容
             withContext(Dispatchers.Main) {
                 displayItems.replaceHomeFeedItemsWithFilteredResult(filterResult)
+            }
+            lastPageProducedVisibleItems = filterResult.filteredItems.any {
+                it.homeFeedContentKey !in existingKeys
             }
         }
     }
