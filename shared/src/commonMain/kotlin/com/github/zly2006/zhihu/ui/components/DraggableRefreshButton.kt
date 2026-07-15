@@ -25,7 +25,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -41,6 +43,8 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.github.zly2006.zhihu.shared.platform.rememberSettingsStore
+import com.github.zly2006.zhihu.ui.subscreens.DEFAULT_FAB_OPACITY
+import com.github.zly2006.zhihu.ui.subscreens.PREF_FAB_OPACITY
 import kotlin.math.roundToInt
 
 /**
@@ -87,9 +91,19 @@ fun DraggableRefreshButton(
     )
     val hapticFeedback = LocalHapticFeedback.current
 
+    val opacityFraction = remember(settings) {
+        settings.getInt(PREF_FAB_OPACITY, DEFAULT_FAB_OPACITY).coerceIn(10, 100) / 100f
+    }
     FloatingActionButton(
         onClick = onClick,
         shape = CircleShape,
+        containerColor = FloatingActionButtonDefaults.containerColor.copy(alpha = opacityFraction),
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = opacityFraction),
+        elevation = if (opacityFraction < 1f) {
+            FloatingActionButtonDefaults.elevation(0.dp, 0.dp, 0.dp, 0.dp)
+        } else {
+            FloatingActionButtonDefaults.elevation()
+        },
         modifier = modifier
             .offset { IntOffset(animatedOffsetX.roundToInt(), animatedOffsetY.roundToInt()) }
             .pointerInput(Unit) {

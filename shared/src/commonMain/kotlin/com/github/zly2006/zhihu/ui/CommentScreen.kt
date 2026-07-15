@@ -131,8 +131,11 @@ import com.github.zly2006.zhihu.shared.platform.rememberExternalUrlOpener
 import com.github.zly2006.zhihu.shared.platform.rememberImagePreviewOpener
 import com.github.zly2006.zhihu.shared.platform.rememberImageSaver
 import com.github.zly2006.zhihu.shared.platform.rememberImageSharer
+import com.github.zly2006.zhihu.shared.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.shared.util.twoDigitString
 import com.github.zly2006.zhihu.shared.viewmodel.CommentItem
+import com.github.zly2006.zhihu.ui.subscreens.PREF_FONT_SIZE
+import com.github.zly2006.zhihu.ui.subscreens.PREF_LINE_HEIGHT
 import com.github.zly2006.zhihu.viewmodel.comment.BaseCommentViewModel
 import com.github.zly2006.zhihu.viewmodel.comment.ChildCommentViewModel
 import com.github.zly2006.zhihu.viewmodel.comment.CommentSortOrder
@@ -412,14 +415,15 @@ fun CommentScreen(
     content: () -> NavDestination,
     activeCommentItem: CommentModel? = null,
     onChildCommentClick: (CommentModel) -> Unit,
+    commentInput: String,
+    onCommentInputChange: (String) -> Unit,
     listState: LazyListState = rememberLazyListState(),
     testOverrides: CommentScreenTestOverrides? = null,
 ) {
     val paginationEnvironment = rememberPaginationEnvironment(allowGuestAccess = false)
-    var commentInput by remember { mutableStateOf("") }
+    val resolvedContent = content()
     var isSending by remember { mutableStateOf(false) }
     var replyToComment by remember { mutableStateOf<CommentModel?>(null) }
-    val resolvedContent = content()
     val viewModelKey = commentViewModelKey(resolvedContent)
 
     // 根据内容类型选择合适的ViewModel
@@ -482,7 +486,7 @@ fun CommentScreen(
             environment = paginationEnvironment,
             replyToCommentId = replyToComment?.item?.id,
         ) {
-            commentInput = ""
+            onCommentInputChange("")
             replyToComment = null
             isSending = false
             coroutineScope.launch {
@@ -857,7 +861,7 @@ fun CommentScreen(
                         ) {
                             BasicTextField(
                                 value = commentInput,
-                                onValueChange = { commentInput = it },
+                                onValueChange = onCommentInputChange,
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag(COMMENT_INPUT_TAG),
@@ -1047,11 +1051,16 @@ private fun CommentItem(
                 val inlineContent = rememberCommentEmojiInlineContent(emojisUsed)
 
                 Column {
+                    val settings = rememberSettingsStore()
+                    val fontSizePercent = remember { settings.getInt(PREF_FONT_SIZE, 100) }
+                    val lineHeightPercent = remember { settings.getInt(PREF_LINE_HEIGHT, 160) }
                     SelectionContainer(
                         modifier = Modifier.commentSelectionWorkaround(),
                     ) {
                         Text(
                             text = string,
+                            fontSize = 16.sp * fontSizePercent / 100,
+                            lineHeight = 16.sp * fontSizePercent / 100 * lineHeightPercent / 100,
                             inlineContent = inlineContent,
                         )
                     }

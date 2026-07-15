@@ -118,6 +118,8 @@ const val DUO3_CARD_LARGE_TITLE_PREFERENCE_KEY = "duo3_card_large_title"
 const val PREF_FONT_SIZE = "contentFontSize"
 const val PREF_LINE_HEIGHT = "contentLineHeight"
 const val PREF_BLOCK_SPACING = "contentBlockSpacing"
+const val PREF_FAB_OPACITY = "fabOpacity"
+const val DEFAULT_FAB_OPACITY = 100
 const val APPEARANCE_SETTINGS_SCROLL_TAG = "appearanceSettings.scroll"
 const val APPEARANCE_SETTINGS_START_DESTINATION_TAG = "appearanceSettings.startDestination"
 const val APPEARANCE_SETTINGS_ANSWER_DOUBLE_TAP_TAG = "appearanceSettings.answerDoubleTap"
@@ -527,6 +529,27 @@ fun AppearanceSettingsScreen(
                         },
                     )
                 }
+
+                var fabOpacity by remember {
+                    mutableIntStateOf(settings.getInt(PREF_FAB_OPACITY, DEFAULT_FAB_OPACITY))
+                }
+                SettingItem(
+                    title = { Text("悬浮按钮透明度") },
+                    description = { Text("控制所有悬浮按钮的透明度 ($fabOpacity%)。") },
+                    bottomAction = {
+                        Slider(
+                            value = fabOpacity.toFloat(),
+                            onValueChange = {
+                                val v = (it / 5).roundToInt() * 5
+                                fabOpacity = v
+                                settings.putInt(PREF_FAB_OPACITY, v)
+                            },
+                            valueRange = 10f..100f,
+                            steps = 17,
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        )
+                    },
+                )
             }
             // ── 阅读 ────────────────────────────────────────────────────────────
             SettingItemGroup(
@@ -611,7 +634,7 @@ fun AppearanceSettingsScreen(
                 )
 
                 SettingItemWithSwitch(
-                    title = { Text("显示刷新 FAB 按钮") },
+                    title = { Text("显示刷新悬浮按钮") },
                     description = { Text("在页面上显示可拖动的刷新按钮。") },
                     checked = showRefreshFab.value,
                     onCheckedChange = {
