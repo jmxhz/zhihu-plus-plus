@@ -1,0 +1,4 @@
+interface:
+  display_name: "同步上游 Release"
+  short_description: "一键检查并安全同步上游 Release，保留定制功能后构建发布 fork 安装包"
+  default_prompt: "使用 $sync-upstream-release 检查并同步最新上游 Release，保留 fork 定制功能，验证后发布。"

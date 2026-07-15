@@ -2,6 +2,7 @@ param(
     [ValidateSet("Check", "Start", "Continue", "Finalize", "Abort")]
     [string] $Action = "Check",
     [string] $Remote = "upstream",
+    [string] $Tag,
     [switch] $DryRun,
     [switch] $Approved
 )
@@ -77,6 +78,31 @@ function Get-LatestStableRelease {
     return $release
 }
 
+function Get-TargetRelease {
+    if (-not $Tag) {
+        return Get-LatestStableRelease
+    }
+    if ($Tag -notmatch '^\d+\.\d+(?:\.\d+)?$') {
+        throw "Release tag must use stable semantic version format X.Y or X.Y.Z. Actual: $Tag"
+    }
+
+    $lines = @(Get-GitOutput ls-remote --tags --refs $Remote "refs/tags/$Tag")
+    if ($lines.Count -ne 1 -or $lines[0] -notmatch '^([0-9a-f]{40})\s+refs/tags/(.+)$') {
+        throw "Stable release tag $Tag was not found exactly once on $Remote."
+    }
+    if ($Matches[2] -ne $Tag) {
+        throw "Resolved tag $($Matches[2]) does not match requested tag $Tag."
+    }
+
+    $components = $Tag.Split('.')
+    $normalized = @($components + @('0', '0', '0'))[0..2] -join '.'
+    return [PSCustomObject]@{
+        Sha = $Matches[1]
+        Tag = $Tag
+        Version = [version] $normalized
+    }
+}
+
 function Fetch-Release {
     param($Release)
     Invoke-Git fetch --quiet --no-tags $Remote "refs/tags/$($Release.Tag)"
@@ -135,7 +161,7 @@ if ($DryRun) {
 
 switch ($Action) {
     "Check" {
-        Show-Check (Get-LatestStableRelease)
+        Show-Check (Get-TargetRelease)
     }
     "Start" {
         Assert-NoGitOperation
@@ -148,7 +174,7 @@ switch ($Action) {
             throw "Start requires a clean working tree."
         }
 
-        $release = Get-LatestStableRelease
+        $release = Get-TargetRelease
         Fetch-Release $release
         $stamp = Get-Date -Format "yyyyMMdd-HHmmssfff"
         $backupBranch = "backup/custom-release-before-$($release.Tag)-$stamp"
