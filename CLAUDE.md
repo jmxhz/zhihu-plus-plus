@@ -2,6 +2,10 @@
 
 本项目是隐私增强的知乎 Android 客户端，支持本地推荐算法、广告屏蔽、内容过滤。
 
+### 上游同步发布边界
+
+同步上游或发布 fork Release 时，只构建和发布 Android Lite 的 ARM64-v8a APK，资产名固定为 `zhihu++-lite-arm64-v8a.apk`。不得构建或发布 Full APK、通用或其他 ABI APK、mapping 压缩包、桌面端 JAR。必须等待 GitHub Actions 终态，并确认 Release 仅包含这一项资产后，才能声明发布完成。
+
 ## 经验总结
 
 ### 交付物与执行面

@@ -16,6 +16,9 @@ on:
       nightly_release:
         required: false
         type: boolean
+      release_tag:
+        required: false
+        type: string
     secrets:
       ANDROID_SIGNING_KEY:
         required: false
@@ -30,66 +33,13 @@ permissions:
   contents: write
 
 jobs:
-  build-desktop:
-    name: Build Desktop App (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set Up JDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '17'
-          cache: 'gradle'
-
-      - name: Change wrapper permissions
-        shell: bash
-        run: chmod +x ./gradlew
-
-      - name: Set desktop artifact suffix
-        id: desktop_suffix
-        shell: bash
-        run: |
-          arch="$(uname -m)"
-          case "$arch" in
-            x86_64|amd64) arch="x64" ;;
-            aarch64|arm64) arch="arm64" ;;
-          esac
-          case "$RUNNER_OS" in
-            Linux) os="linux" ;;
-            macOS) os="macos" ;;
-            Windows) os="windows" ;;
-            *) os="$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')" ;;
-          esac
-          echo "suffix=$os-$arch" >> "$GITHUB_OUTPUT"
-
-      - name: Build Desktop Jar
-        shell: bash
-        run: ./gradlew ${{ inputs.args }} :desktopApp:packageReleaseUberJarForCurrentOS
-
-      - name: Move desktop jar
-        shell: bash
-        run: |
-          mkdir -p desktopApp/build/upload
-          mv desktopApp/build/compose/jars/*-release.jar desktopApp/build/upload/zhihu++-desktop-${{ steps.desktop_suffix.outputs.suffix }}.jar
-
-      - name: Upload Desktop Jar
-        uses: actions/upload-artifact@v4
-        with:
-          name: zhihu++-desktop-${{ steps.desktop_suffix.outputs.suffix }}
-          path: desktopApp/build/upload/zhihu++-desktop-${{ steps.desktop_suffix.outputs.suffix }}.jar
-
   build:
-    name: Build Android App
-    needs: build-desktop
+    name: Build Android Lite (arm64-v8a)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       # Set Current Date As Env Variable
       - name: Set current date as env variable
         run: echo "date_today=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
@@ -113,11 +63,7 @@ jobs:
         run: cargo install cargo-ndk || true
 
       - name: Add Android Rust targets
-        run: |
-          rustup target add aarch64-linux-android
-          rustup target add armv7-linux-androideabi
-          rustup target add i686-linux-android
-          rustup target add x86_64-linux-android
+        run: rustup target add aarch64-linux-android
 
       - name: Change wrapper permissions
         run: chmod +x ./gradlew
@@ -158,9 +104,7 @@ jobs:
       #  run: ./gradlew test
       - name: Build App
         # Build .apk
-        run: |
-          bash ./gradlew ${{inputs.args}} assembleFullRelease
-          bash ./gradlew ${{inputs.args}} assembleLiteRelease
+        run: bash ./gradlew ${{ inputs.args }} assembleLiteRelease
         env:
           signingKey: ${{ secrets.ANDROID_SIGNING_KEY }}
           keyAlias: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -170,25 +114,19 @@ jobs:
       - name: Move files
         run: |
           mkdir -p app/build/upload
-          mv app/build/outputs/apk/full/release/app-full-release.apk app/build/upload/zhihu++-full.apk
-          mv app/build/outputs/apk/lite/release/app-lite-release.apk app/build/upload/zhihu++-lite.apk
-      - name: Download desktop jars
-        uses: actions/download-artifact@v4
-        with:
-          pattern: zhihu++-desktop-*
-          path: app/build/upload
-          merge-multiple: true
-      - name: Compress lite mapping file
-        if: ${{ inputs.minify }}
-        run: |
-          mkdir -p app/build/upload
-          zip app/build/upload/mapping-lite.zip app/build/outputs/mapping/liteRelease/mapping.txt
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/lite/release/app-lite-arm64-v8a-release*.apk)
+          if (( ${#apks[@]} != 1 )); then
+            echo "Expected exactly one Lite ARM64-v8a APK, found ${#apks[@]}" >&2
+            exit 1
+          fi
+          mv "${apks[0]}" app/build/upload/zhihu++-lite-arm64-v8a.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.date_today }} - ${{ env.repository_name }} - ${{ inputs.name }}
-          path: app/build/upload/
+          path: app/build/upload/zhihu++-lite-arm64-v8a.apk
 
       # Delete existing nightly release
       - name: Delete existing nightly release
@@ -295,49 +233,37 @@ jobs:
             Nightly build generated on ${{ env.date_today }}
 
             ${{ steps.nightly_changelog.outputs.result }}
-          files: |
-            app/build/upload/zhihu++-lite.apk
-            app/build/upload/mapping-lite.zip
-            app/build/upload/zhihu++-full.apk
-            app/build/upload/zhihu++-desktop-*.jar
+          files: app/build/upload/zhihu++-lite-arm64-v8a.apk
           fail_on_unmatched_files: true
           prerelease: true
       - name: Generate release notes
-        if: ${{ inputs.release && startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ inputs.release && (startsWith(github.ref, 'refs/tags/') || inputs.release_tag != '') }}
         id: release_notes
         uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         with:
           script: |
             const { data } = await github.rest.repos.generateReleaseNotes({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              tag_name: context.ref.replace('refs/tags/', ''),
+              tag_name: process.env.RELEASE_TAG,
             });
             console.log(data.body);
             return data.body;
           result-encoding: string
 
       - name: Create Release
-        if: ${{ inputs.release && startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ inputs.release && (startsWith(github.ref, 'refs/tags/') || inputs.release_tag != '') }}
         id: release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: ${{ inputs.release_tag || github.ref_name }}
           body: |
-            如果要使用，请下载最新的 APK 文件进行安装。不需要下载 mapping.zip，除非你是开发人员且需要调试混淆后的代码。
-            Full 版本包含 AI 功能和 AI 模型，可处理NLP任务；Lite 版本体积更小，只有不到 4 MB 的大小。
-
-            > 关于Full和Lite两个版本的说明：
-            > Full版本包含了一个onnx框架，可以在端侧进行离线AI推理，支持基于LLM embedding的智能内容过滤功能，
-            > 这实际上主要是本人对端侧AI的技术尝试，实际功能还有很多没开发的，比如人本地知识库（懒）；
-            > Lite版本不支持智能内容过滤，但体积更小，性能更好。您可以根据自己的需求选择下载哪个版本。
+            仅提供 Android Lite ARM64-v8a 安装包。
 
             ${{ steps.release_notes.outputs.result }}
-          files: |
-            app/build/upload/zhihu++-lite.apk
-            app/build/upload/mapping-lite.zip
-            app/build/upload/zhihu++-full.apk
-            app/build/upload/zhihu++-desktop-*.jar
+          files: app/build/upload/zhihu++-lite-arm64-v8a.apk
           fail_on_unmatched_files: true
           prerelease: false
