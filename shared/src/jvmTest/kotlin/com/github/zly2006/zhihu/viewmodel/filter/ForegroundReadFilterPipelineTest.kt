@@ -29,7 +29,6 @@ import com.github.zly2006.zhihu.shared.data.toFeedDisplayItemNavDestinationJson
 import com.github.zly2006.zhihu.shared.filter.ContentOpenEventSupport
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.JsonArray
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -324,7 +323,6 @@ class ForegroundReadFilterPipelineTest {
                 url = "",
                 author = person(isFollowing),
                 commentCount = 0,
-                content = JsonArray(emptyList()),
             ),
         ),
         navDestinationJson = Pin(id).toFeedDisplayItemNavDestinationJson(),

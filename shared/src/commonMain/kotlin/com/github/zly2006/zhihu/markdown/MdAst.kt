@@ -338,21 +338,41 @@ private fun createListBlock(
     ordered = ordered,
     startNumber = element.attr("start").toIntOrNull() ?: 1,
 ).apply {
-    element.select("> li").forEach { listItemElement ->
-        appendChild(
-            ListItem().apply {
-                val children = listItemElement.childNodes().convertNodesToBlocks(noNativeBlock)
-                if (children.isEmpty()) {
-                    appendChild(
-                        Paragraph().apply {
-                            appendChildren(extractInlineChildren(listItemElement))
-                        },
-                    )
-                } else {
-                    appendChildren(children)
+    var precedingListItem: ListItem? = null
+    element.children().forEach { childElement ->
+        when (childElement.tagName().lowercase()) {
+            "li" -> {
+                val listItem = ListItem().apply {
+                    val children = childElement.childNodes().convertNodesToBlocks(noNativeBlock)
+                    if (children.isEmpty()) {
+                        appendChild(
+                            Paragraph().apply {
+                                appendChildren(extractInlineChildren(childElement))
+                            },
+                        )
+                    } else {
+                        appendChildren(children)
+                    }
                 }
-            },
-        )
+                appendChild(listItem)
+                precedingListItem = listItem
+            }
+
+            "ul", "ol" -> {
+                val nestedList = createListBlock(
+                    childElement,
+                    ordered = childElement.tagName().equals("ol", ignoreCase = true),
+                    noNativeBlock = noNativeBlock,
+                )
+                if (precedingListItem != null) {
+                    precedingListItem.appendChild(nestedList)
+                } else {
+                    val nestedItems = nestedList.children.toList()
+                    nestedList.clearChildren()
+                    appendChildren(nestedItems)
+                }
+            }
+        }
     }
 }
 
@@ -368,6 +388,10 @@ private fun createBlockImage(element: Element): MarkdownNode? {
     return Figure(
         imageUrl = src,
         caption = caption,
+        imageWidth = element.attr("data-rawwidth").toIntOrNull()
+            ?: element.attr("width").toIntOrNull(),
+        imageHeight = element.attr("data-rawheight").toIntOrNull()
+            ?: element.attr("height").toIntOrNull(),
     )
 }
 
@@ -378,8 +402,10 @@ private fun createFigureBlock(element: Element): MarkdownNode? {
         return Figure(
             imageUrl = src,
             caption = caption,
-            imageWidth = image.attr("width").toIntOrNull(),
-            imageHeight = image.attr("height").toIntOrNull(),
+            imageWidth = image.attr("data-rawwidth").toIntOrNull()
+                ?: image.attr("width").toIntOrNull(),
+            imageHeight = image.attr("data-rawheight").toIntOrNull()
+                ?: image.attr("height").toIntOrNull(),
         )
     }
 

@@ -114,8 +114,10 @@ import com.github.zly2006.zhihu.shared.util.Log
 import com.github.zly2006.zhihu.ui.components.AnnouncementCard
 import com.github.zly2006.zhihu.ui.components.AnnouncementCardDefaults
 import com.github.zly2006.zhihu.ui.components.BlockByKeywordsDialog
-import com.github.zly2006.zhihu.ui.components.BlockUserConfirmDialog
 import com.github.zly2006.zhihu.ui.components.DraggableRefreshButton
+import com.github.zly2006.zhihu.ui.components.FeedAuthorBlockConfirmDialog
+import com.github.zly2006.zhihu.ui.components.FeedAuthorBlockRequest
+import com.github.zly2006.zhihu.ui.components.FeedAuthorBlockType
 import com.github.zly2006.zhihu.ui.components.FeedCard
 import com.github.zly2006.zhihu.ui.components.FeedPullToRefresh
 import com.github.zly2006.zhihu.ui.components.MyModalBottomSheet
@@ -135,7 +137,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 
 const val PREFERENCE_NAME = "com.github.zly2006.zhihu_preferences"
-const val ARTICLE_USE_WEBVIEW_PREFERENCE_KEY = "webviewRender"
+const val ARTICLE_USE_WEBVIEW_PREFERENCE_KEY = "webviewRenderLegacy"
 const val QQ_GROUP_DISMISSED_PREFERENCE_KEY = "dismissQQGroup3"
 const val AIGC_MARKING_ANNOUNCEMENT_DISMISSED_PREFERENCE_KEY = "dismissAigcMarkingAnnouncement"
 const val HOME_TOP_ACTIONS_TAG = "home_top_actions"
@@ -297,9 +299,7 @@ fun HomeScreen(
         }
     }
 
-    // 屏蔽用户确认对话框
-    var showBlockUserDialog by remember { mutableStateOf(false) }
-    var userToBlock by remember { mutableStateOf<Pair<String, String>?>(null) } // 二元组内容为 userId 和 userName。
+    var feedAuthorBlockRequest by remember { mutableStateOf<FeedAuthorBlockRequest?>(null) }
 
     // 按关键词屏蔽对话框
     var showBlockByKeywordsDialog by remember { mutableStateOf(false) }
@@ -616,26 +616,22 @@ fun HomeScreen(
                             is Feed.AnswerTarget -> target.thumbnail
                             else -> null
                         },
-                        onLike = {
-                            if (localHomeViewModel != null && it.localContentId != null) {
-                                localHomeViewModel.onLocalItemFeedback(it, 1.0)
-                                userMessages.showShortMessage("已记录喜欢，本地推荐会逐步学习")
-                            } else {
-                                userMessages.showShortMessage("收到喜欢，功能正在优化")
-                            }
-                        },
-                        onDislike = {
-                            if (localHomeViewModel != null && it.localContentId != null) {
-                                localHomeViewModel.onLocalItemFeedback(it, -1.0)
-                                userMessages.showShortMessage("已降低这类本地推荐的优先级")
-                            } else {
-                                userMessages.showShortMessage("收到反馈，功能正在优化")
-                            }
-                        },
                         onBlockUser = { feedItem ->
                             feedBlockActions.handleBlockUser(viewModel, feedItem) { authorInfo ->
-                                userToBlock = authorInfo
-                                showBlockUserDialog = true
+                                feedAuthorBlockRequest = FeedAuthorBlockRequest(
+                                    type = FeedAuthorBlockType.CONTENT_AUTHOR,
+                                    userId = authorInfo.first,
+                                    userName = authorInfo.second,
+                                )
+                            }
+                        },
+                        onBlockQuestionAuthor = { feedItem ->
+                            feedBlockActions.handleBlockQuestionAuthor(viewModel, feedItem) { authorInfo ->
+                                feedAuthorBlockRequest = FeedAuthorBlockRequest(
+                                    type = FeedAuthorBlockType.QUESTION_AUTHOR,
+                                    userId = authorInfo.first,
+                                    userName = authorInfo.second,
+                                )
                             }
                         },
                         onBlockByKeywords = { feedItem ->
@@ -653,7 +649,7 @@ fun HomeScreen(
                         if (feed != null) {
 //                            DataHolder.putFeed(feed)
                             (viewModel as? HomeFeedInteractionViewModel)?.onUiContentClick(paginationEnvironment, feed, item)
-                        } else if (item.localContentId != null) {
+                        } else {
                             localHomeViewModel?.onLocalItemOpened(item)
                         }
                         if (destination != null) {
@@ -802,19 +798,13 @@ fun HomeScreen(
         }
     }
 
-    // 屏蔽用户确认对话框
-    BlockUserConfirmDialog(
-        showDialog = showBlockUserDialog,
-        userToBlock = userToBlock,
+    FeedAuthorBlockConfirmDialog(
+        request = feedAuthorBlockRequest,
         displayItems = viewModel.displayItems,
-        onDismiss = {
-            showBlockUserDialog = false
-            userToBlock = null
-        },
+        onDismiss = { feedAuthorBlockRequest = null },
         onConfirm = {
             viewModel.refresh(paginationEnvironment)
-            showBlockUserDialog = false
-            userToBlock = null
+            feedAuthorBlockRequest = null
         },
     )
 

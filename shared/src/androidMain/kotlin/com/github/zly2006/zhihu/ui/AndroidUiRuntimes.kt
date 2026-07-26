@@ -155,6 +155,7 @@ fun AccountData.Data.toAccountSettingsAccountState(): AccountSettingsAccountStat
     avatarUrl = self?.avatarUrl,
     id = self?.id ?: "",
     urlToken = self?.urlToken,
+    identityManagementSupported = true,
 )
 
 private fun Context.zhihuVersionInfo(): String {
@@ -386,6 +387,7 @@ actual fun rememberBlocklistRuleImporter(
                         importBlocklistBackupFromJsonText(
                             keywordDao = database.blockedKeywordDao(),
                             userDao = database.blockedUserDao(),
+                            questionAuthorDao = database.blockedQuestionAuthorDao(),
                             topicDao = database.blockedTopicDao(),
                             text = text,
                         )
@@ -419,6 +421,7 @@ actual fun rememberBlocklistRuleExporter(): suspend () -> String {
                     encodeBlocklistBackup(
                         keywordDao = database.blockedKeywordDao(),
                         userDao = database.blockedUserDao(),
+                        questionAuthorDao = database.blockedQuestionAuthorDao(),
                         topicDao = database.blockedTopicDao(),
                     ),
                 )

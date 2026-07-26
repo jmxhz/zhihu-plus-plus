@@ -17,6 +17,8 @@
 
 package com.github.zly2006.zhihu.viewmodel.filter
 
+import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import androidx.sqlite.execSQL
 import kotlinx.coroutines.test.runTest
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
@@ -59,5 +61,62 @@ class ContentFilterDatabaseTest {
 
         assertEquals(1, database.cloudReadHistoryDao().getRecordCount())
         database.close()
+    }
+
+    @Test
+    fun storesBlockedQuestionAuthor() = runTest {
+        val database = getContentFilterDatabase(
+            createTempDirectory("content-filter-room-question-author").resolve("content-filter.db").toFile(),
+        )
+
+        database.blockedQuestionAuthorDao().insertUser(
+            BlockedQuestionAuthor(
+                userId = "asker-id",
+                userName = "提问者",
+                urlToken = "asker-token",
+            ),
+        )
+
+        val authors = database.blockedQuestionAuthorDao().getAllUsers()
+        assertEquals(listOf("asker-id"), authors.map { it.userId })
+        assertEquals(listOf("提问者"), authors.map { it.userName })
+        database.close()
+    }
+
+    @Test
+    fun migratesForkVersion7WithoutLosingCloudReadHistory() = runTest {
+        val databaseFile = createTempDirectory("content-filter-room-v7").resolve("content-filter.db").toFile()
+        val version8Database = getContentFilterDatabase(databaseFile)
+        version8Database.cloudReadHistoryDao().upsertRecords(
+            listOf(
+                CloudReadHistoryRecord(
+                    contentType = ContentType.ANSWER,
+                    contentId = "7",
+                    questionId = "70",
+                    readTime = 7L,
+                    syncedAt = 7L,
+                ),
+            ),
+        )
+        version8Database.close()
+
+        val version7Connection = BundledSQLiteDriver().open(databaseFile.absolutePath)
+        version7Connection.execSQL("DROP TABLE `${BlockedQuestionAuthor.TABLE_NAME}`")
+        version7Connection.execSQL("PRAGMA user_version = 7")
+        version7Connection.close()
+
+        val migratedDatabase = getContentFilterDatabase(databaseFile)
+        assertEquals(1, migratedDatabase.cloudReadHistoryDao().getRecordCount())
+        migratedDatabase.blockedQuestionAuthorDao().insertUser(
+            BlockedQuestionAuthor(
+                userId = "migrated-asker",
+                userName = "迁移后的提问者",
+            ),
+        )
+        assertEquals(
+            listOf("migrated-asker"),
+            migratedDatabase.blockedQuestionAuthorDao().getAllUsers().map { it.userId },
+        )
+        migratedDatabase.close()
     }
 }

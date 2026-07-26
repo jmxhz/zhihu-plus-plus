@@ -194,7 +194,7 @@ sealed interface Feed {
         override val url: String,
         override val author: Person,
         val commentCount: Int = 0,
-        val content: JsonArray? = null,
+        val content: List<DataHolder.Pin.ContentItem> = emptyList(),
         val likeCount: Int = 0,
         val excerptTitle: String = "",
         val contentHtml: String = "",
@@ -247,11 +247,11 @@ sealed interface Feed {
         val boundTopicIds: List<Long> = emptyList(),
         val relationship: Relationship? = null,
         val isFollowing: Boolean = false,
+        @Serializable(with = LegacyAuthorSerCompat::class)
+        override val author: Person? = null,
     ) : Target {
         override val title: String
             get() = _title ?: _name.orEmpty()
-
-        override val author: Person? = null
 
         override fun filterReason(): String? = if (answerCount < 5 && followerCount < 50) {
             "规则：问题；回答数 < 5，关注数 < 50"
@@ -468,6 +468,13 @@ data class Person(
     val badgeV2: DataHolder.BadgeV2?
         get() = DataHolder.injectZhPlusAuthorBadge(id, apiBadgeV2)
 }
+
+val Feed.Target.questionAuthor: Person?
+    get() = when (this) {
+        is Feed.AnswerTarget -> question.author
+        is Feed.QuestionTarget -> author
+        else -> null
+    }
 
 @Serializable
 data class Relationship(

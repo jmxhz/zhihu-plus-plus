@@ -64,6 +64,7 @@ import com.github.zly2006.zhihu.util.exportCollectionItemsToZip
 import com.github.zly2006.zhihu.util.saveBitmapToGallery
 import com.github.zly2006.zhihu.viewmodel.filter.AndroidContentFilterRuntime
 import com.github.zly2006.zhihu.viewmodel.filter.BlockedKeywordService
+import com.github.zly2006.zhihu.viewmodel.filter.BlockedQuestionAuthor
 import com.github.zly2006.zhihu.viewmodel.filter.BlockedUser
 import com.github.zly2006.zhihu.viewmodel.filter.CLOUD_READ_HISTORY_INCLUDE
 import com.github.zly2006.zhihu.viewmodel.filter.CloudReadHistorySyncer
@@ -277,6 +278,11 @@ open class SharedAndroidPaginationEnvironment(
             database.blockedUserDao().isUserBlocked(userId)
         }
 
+    override suspend fun isQuestionAuthorBlocked(userId: String): Boolean =
+        getContentFilterDatabase(context).let { database ->
+            database.blockedQuestionAuthorDao().isUserBlocked(userId)
+        }
+
     override fun blockedUserIds(): Set<String> =
         kotlinx.coroutines.runBlocking {
             val database = getContentFilterDatabase(context)
@@ -304,9 +310,31 @@ open class SharedAndroidPaginationEnvironment(
         )
     }
 
+    override suspend fun addBlockedQuestionAuthor(
+        userId: String,
+        userName: String,
+        urlToken: String?,
+        avatarUrl: String?,
+    ) {
+        val database = getContentFilterDatabase(context)
+        database.blockedQuestionAuthorDao().insertUser(
+            BlockedQuestionAuthor(
+                userId = userId,
+                userName = userName,
+                urlToken = urlToken,
+                avatarUrl = avatarUrl,
+            ),
+        )
+    }
+
     override suspend fun removeBlockedUser(userId: String) {
         val database = getContentFilterDatabase(context)
         database.blockedUserDao().deleteUserById(userId)
+    }
+
+    override suspend fun removeBlockedQuestionAuthor(userId: String) {
+        val database = getContentFilterDatabase(context)
+        database.blockedQuestionAuthorDao().deleteUserById(userId)
     }
 
     override suspend fun recordContentOpenEvent(
@@ -356,6 +384,7 @@ open class SharedAndroidPaginationEnvironment(
                 settings = filterSettings,
                 blockedKeywordDao = filterDatabase.blockedKeywordDao(),
                 blockedUserDao = filterDatabase.blockedUserDao(),
+                blockedQuestionAuthorDao = filterDatabase.blockedQuestionAuthorDao(),
                 blockedTopicDao = filterDatabase.blockedTopicDao(),
                 blockedKeywordService = BlockedKeywordService(
                     keywordDao = filterDatabase.blockedKeywordDao(),

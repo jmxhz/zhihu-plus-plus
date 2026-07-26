@@ -33,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
         ContentViewRecord::class,
         BlockedKeyword::class,
         BlockedUser::class,
+        BlockedQuestionAuthor::class,
         BlockedContentRecord::class,
         BlockedTopic::class,
         BlockedFeedRecord::class,
@@ -40,7 +41,7 @@ import kotlinx.coroutines.Dispatchers
         CloudReadHistoryRecord::class,
         CloudReadHistorySyncState::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 @ConstructedBy(ContentFilterDatabaseConstructor::class)
@@ -54,6 +55,8 @@ abstract class ContentFilterDatabase : RoomDatabase() {
     abstract fun blockedKeywordDao(): BlockedKeywordDao
 
     abstract fun blockedUserDao(): BlockedUserDao
+
+    abstract fun blockedQuestionAuthorDao(): BlockedQuestionAuthorDao
 
     abstract fun blockedContentRecordDao(): BlockedContentRecordDao
 
@@ -165,48 +168,74 @@ private val migration5To6 = object : Migration(5, 6) {
 
 private val migration6To7 = object : Migration(6, 7) {
     override fun migrate(connection: SQLiteConnection) {
-        connection.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS `${CloudReadHistoryRecord.TABLE_NAME}` (
-                `contentType` TEXT NOT NULL,
-                `contentId` TEXT NOT NULL,
-                `questionId` TEXT,
-                `actionUrl` TEXT,
-                `readTime` INTEGER NOT NULL,
-                `syncedAt` INTEGER NOT NULL,
-                PRIMARY KEY(`contentType`, `contentId`)
-            )
-            """.trimIndent(),
-        )
-        connection.execSQL(
-            """
-            CREATE INDEX IF NOT EXISTS `index_${CloudReadHistoryRecord.TABLE_NAME}_contentType`
-            ON `${CloudReadHistoryRecord.TABLE_NAME}` (`contentType`)
-            """.trimIndent(),
-        )
-        connection.execSQL(
-            """
-            CREATE INDEX IF NOT EXISTS `index_${CloudReadHistoryRecord.TABLE_NAME}_readTime`
-            ON `${CloudReadHistoryRecord.TABLE_NAME}` (`readTime`)
-            """.trimIndent(),
-        )
-        connection.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS `${CloudReadHistorySyncState.TABLE_NAME}` (
-                `syncKey` TEXT NOT NULL PRIMARY KEY,
-                `nextUrl` TEXT,
-                `lastSyncTime` INTEGER NOT NULL,
-                `fullSyncComplete` INTEGER NOT NULL
-            )
-            """.trimIndent(),
-        )
+        connection.createCloudReadHistoryTables()
+        connection.createBlockedQuestionAuthorTable()
     }
+}
+
+private val migration7To8 = object : Migration(7, 8) {
+    override fun migrate(connection: SQLiteConnection) {
+        connection.createCloudReadHistoryTables()
+        connection.createBlockedQuestionAuthorTable()
+    }
+}
+
+private fun SQLiteConnection.createCloudReadHistoryTables() {
+    execSQL(
+        """
+        CREATE TABLE IF NOT EXISTS `${CloudReadHistoryRecord.TABLE_NAME}` (
+            `contentType` TEXT NOT NULL,
+            `contentId` TEXT NOT NULL,
+            `questionId` TEXT,
+            `actionUrl` TEXT,
+            `readTime` INTEGER NOT NULL,
+            `syncedAt` INTEGER NOT NULL,
+            PRIMARY KEY(`contentType`, `contentId`)
+        )
+        """.trimIndent(),
+    )
+    execSQL(
+        """
+        CREATE INDEX IF NOT EXISTS `index_${CloudReadHistoryRecord.TABLE_NAME}_contentType`
+        ON `${CloudReadHistoryRecord.TABLE_NAME}` (`contentType`)
+        """.trimIndent(),
+    )
+    execSQL(
+        """
+        CREATE INDEX IF NOT EXISTS `index_${CloudReadHistoryRecord.TABLE_NAME}_readTime`
+        ON `${CloudReadHistoryRecord.TABLE_NAME}` (`readTime`)
+        """.trimIndent(),
+    )
+    execSQL(
+        """
+        CREATE TABLE IF NOT EXISTS `${CloudReadHistorySyncState.TABLE_NAME}` (
+            `syncKey` TEXT NOT NULL PRIMARY KEY,
+            `nextUrl` TEXT,
+            `lastSyncTime` INTEGER NOT NULL,
+            `fullSyncComplete` INTEGER NOT NULL
+        )
+        """.trimIndent(),
+    )
+}
+
+private fun SQLiteConnection.createBlockedQuestionAuthorTable() {
+    execSQL(
+        """
+        CREATE TABLE IF NOT EXISTS `${BlockedQuestionAuthor.TABLE_NAME}` (
+            `userId` TEXT NOT NULL PRIMARY KEY,
+            `userName` TEXT NOT NULL,
+            `urlToken` TEXT,
+            `avatarUrl` TEXT,
+            `createdTime` INTEGER NOT NULL
+        )
+        """.trimIndent(),
+    )
 }
 
 fun buildContentFilterDatabase(
     builder: Builder<ContentFilterDatabase>,
 ): ContentFilterDatabase = builder
-    .addMigrations(migration2To3, migration3To4, migration4To5, migration5To6, migration6To7)
+    .addMigrations(migration2To3, migration3To4, migration4To5, migration5To6, migration6To7, migration7To8)
     .fallbackToDestructiveMigration(true)
     .applyPlatformDriver()
     .setQueryCoroutineContext(Dispatchers.Default)

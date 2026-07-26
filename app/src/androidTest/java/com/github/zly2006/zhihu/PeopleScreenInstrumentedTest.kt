@@ -71,6 +71,7 @@ import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_HEADER_TAG
 import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_OFFICIAL_BADGE_TAG
 import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_PINS_LIST_TAG
 import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_QUESTIONS_LIST_TAG
+import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_QUESTION_AUTHOR_BLOCK_BUTTON_TAG
 import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_RECOMMENDATION_BLOCK_BUTTON_TAG
 import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_ROOT_TAG
 import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_SEARCH_BUTTON_TAG
@@ -110,8 +111,8 @@ class PeopleScreenInstrumentedTest {
          * Expected behavior:
          * 1. The profile header must render the seeded avatar area plus all four statistics from a
          *    precreated production ViewModel and a mocked profile fetch.
-         * 2. Follow, block, and recommendation-block buttons must each use the real production
-         *    mutation path while staying offline through mocked HTTP/local database state.
+         * 2. Follow, block, recommendation-block, and question-author-block buttons must each use
+         *    the real production mutation path while staying offline through mocked HTTP/local database state.
          * 3. On the answer tab, both sort buttons should issue deterministic production refreshes
          *    and a deep scroll should keep the seeded answer row interactive for navigation.
          * 4. On the article tab, the same sort and deep-row navigation behavior must remain stable.
@@ -132,8 +133,12 @@ class PeopleScreenInstrumentedTest {
         composeRule.onNodeWithTag(PEOPLE_SCREEN_FOLLOW_BUTTON_TAG).performClick()
         composeRule.onNodeWithTag(PEOPLE_SCREEN_BLOCK_BUTTON_TAG).performClick()
         composeRule.onNodeWithTag(PEOPLE_SCREEN_RECOMMENDATION_BLOCK_BUTTON_TAG).performClick()
+        composeRule.onNodeWithTag(PEOPLE_SCREEN_QUESTION_AUTHOR_BLOCK_BUTTON_TAG).performClick()
         composeRule.waitUntil("Expected profile actions to update state", timeoutMillis = 5_000) {
-            viewModel.isFollowing && viewModel.isBlocking && viewModel.isBlockedInRecommendations
+            viewModel.isFollowing &&
+                viewModel.isBlocking &&
+                viewModel.isBlockedInRecommendations &&
+                viewModel.isBlockedAsQuestionAuthor
         }
         composeRule.waitUntilRequestCount(HttpMethod.Post, "members/${ROOT_PERSON.urlToken}/followers", 1)
         composeRule.waitUntilRequestCount(HttpMethod.Post, "members/${ROOT_PERSON.urlToken}/actions/block", 1)
@@ -192,20 +197,22 @@ class PeopleScreenInstrumentedTest {
          *    their seeded rows still need to stay visible and interactive after swipe cycles.
          * 4. Tab switching itself must remain deterministic through the tagged tab row.
          */
-        seededViewModel(itemCount = 18)
+        val viewModel = seededViewModel(itemCount = 18)
+        val lastActivityTag = "people_screen_activity_item_${viewModel.activitiesFeedModel.displayItems[17].stableKey}"
+        val clickedActivityTag = "people_screen_activity_item_${viewModel.activitiesFeedModel.displayItems[1].stableKey}"
         val navigator = setPeopleScreen()
 
         composeRule.onNodeWithTag("people_screen_tab_2").performClick()
         composeRule.onNodeWithTag(PEOPLE_SCREEN_ACTIVITIES_LIST_TAG).assertIsDisplayed()
         composeRule
             .onNodeWithTag(PEOPLE_SCREEN_ACTIVITIES_LIST_TAG)
-            .performScrollToNode(hasTestTag("people_screen_activity_item_activity-18"))
+            .performScrollToNode(hasTestTag(lastActivityTag))
         composeRule.waitUntilRequestCount(HttpMethod.Get, "moments/${ROOT_PERSON.urlToken}/activities", 1)
-        composeRule.onNodeWithTag("people_screen_activity_item_activity-18").assertIsDisplayed()
+        composeRule.onNodeWithTag(lastActivityTag).assertIsDisplayed()
         composeRule
             .onNodeWithTag(PEOPLE_SCREEN_ACTIVITIES_LIST_TAG)
-            .performScrollToNode(hasTestTag("people_screen_activity_item_activity-2"))
-        composeRule.onNodeWithTag("people_screen_activity_item_activity-2").performClick()
+            .performScrollToNode(hasTestTag(clickedActivityTag))
+        composeRule.onNodeWithTag(clickedActivityTag).performClick()
 
         composeRule.onNodeWithTag("people_screen_tab_3").performClick()
         composeRule.onNodeWithTag(PEOPLE_SCREEN_COLLECTIONS_LIST_TAG).assertIsDisplayed()
@@ -436,7 +443,6 @@ class PeopleScreenInstrumentedTest {
                 details = "动态详情 ${index + 1}",
                 feed = null,
                 navDestinationJson = Search(query = "离线动态 ${index + 1}").toFeedDisplayItemNavDestinationJson(),
-                localFeedId = "activity-${index + 1}",
             )
         }
 
@@ -459,6 +465,7 @@ class PeopleScreenInstrumentedTest {
             seededViewModel.isFollowing = false
             seededViewModel.isBlocking = false
             seededViewModel.isBlockedInRecommendations = false
+            seededViewModel.isBlockedAsQuestionAuthor = false
             seededViewModel.memberHashId = ROOT_PERSON.id
 
             seededViewModel.answersFeedModel.allData.clear()
