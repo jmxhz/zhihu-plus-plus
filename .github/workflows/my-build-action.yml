@@ -104,7 +104,11 @@ jobs:
       #  run: ./gradlew test
       - name: Build App
         # Build .apk
-        run: bash ./gradlew ${{ inputs.args }} assembleLiteRelease
+        run: |
+          if [[ -z "${signingKey:-}" ]]; then
+            unset signingKey keyAlias keyStorePassword keyPassword
+          fi
+          ./gradlew ${{ inputs.args }} assembleLiteRelease
         env:
           signingKey: ${{ secrets.ANDROID_SIGNING_KEY }}
           keyAlias: ${{ secrets.ANDROID_KEY_ALIAS }}
