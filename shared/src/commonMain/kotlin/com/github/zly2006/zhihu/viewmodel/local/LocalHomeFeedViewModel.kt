@@ -72,6 +72,7 @@ class LocalHomeFeedViewModel :
                 }
                 if (visibleItems.isNotEmpty()) {
                     addDisplayItems(visibleItems)
+                    latestLoadedDisplayItems.value = filterResult.filteredItems
                     break
                 }
             }
@@ -132,6 +133,7 @@ class LocalHomeFeedViewModel :
             }
             delay(300)
         }
+        latestLoadedDisplayItems.value = fallbackItems
     }
 
     override suspend fun recordContentInteraction(

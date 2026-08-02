@@ -73,6 +73,7 @@ import com.github.zly2006.zhihu.ui.components.LocalSegmentActionSheetHost
 import com.github.zly2006.zhihu.ui.components.LocalSegmentCommentHost
 import com.github.zly2006.zhihu.ui.components.SegmentActionSheet
 import com.github.zly2006.zhihu.ui.components.SegmentActionSheetState
+import com.github.zly2006.zhihu.ui.components.SegmentHighlightInteractionHost
 import com.github.zly2006.zhihu.ui.subscreens.PREF_BLOCK_SPACING
 import com.github.zly2006.zhihu.ui.subscreens.PREF_FONT_SIZE
 import com.github.zly2006.zhihu.ui.subscreens.PREF_LINE_HEIGHT
@@ -337,36 +338,38 @@ private fun RenderMarkdownDocument(
         },
         LocalSegmentActionSheetHost provides { state -> segmentActionSheetState = state },
     ) {
-        Box(modifier = modifier) {
-            NoDoubleClickSelectionScope {
-                Markdown(
-                    document = document,
-                    imageContent = { data, imageModifier ->
-                        RenderImage(
-                            data = data,
-                            modifier = imageModifier,
-                            imageUrls = previewImageUrls,
-                        )
-                    },
-                    scrollState = scrollState,
-                    enableScroll = enableScroll,
-                    enableSelection = selectable,
-                    deferOffscreenBlocks = deferOffscreenBlocks,
-                    onLinkClick = { url ->
-                        resolveContent(url)?.let { navigator.onNavigate(it) }
-                            ?: openExternalUrl(url)
-                    },
-                    header = header,
-                    footer = footer,
-                    theme = theme,
-                )
+        SegmentHighlightInteractionHost {
+            Box(modifier = modifier) {
+                NoDoubleClickSelectionScope {
+                    Markdown(
+                        document = document,
+                        imageContent = { data, imageModifier ->
+                            RenderImage(
+                                data = data,
+                                modifier = imageModifier,
+                                imageUrls = previewImageUrls,
+                            )
+                        },
+                        scrollState = scrollState,
+                        enableScroll = enableScroll,
+                        enableSelection = selectable,
+                        deferOffscreenBlocks = deferOffscreenBlocks,
+                        onLinkClick = { url ->
+                            resolveContent(url)?.let { navigator.onNavigate(it) }
+                                ?: openExternalUrl(url)
+                        },
+                        header = header,
+                        footer = footer,
+                        theme = theme,
+                    )
+                }
             }
         }
     }
     CommentScreenComponent(
         showComments = segmentCommentTarget != null,
         onDismiss = { segmentCommentTarget = null },
-        content = segmentCommentTarget ?: SegmentCommentHolder("dummy", "dummy", "dummy"),
+        content = segmentCommentTarget ?: SegmentCommentHolder("dummy", "dummy", "dummy", "", "", 0, 0),
     )
     segmentActionSheetState?.let { state ->
         SegmentActionSheet(state)
