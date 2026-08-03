@@ -381,6 +381,8 @@ interface ArticleHost {
 
     fun consumePendingContentOpenFrom(destination: NavDestination): String = ContentOpenFrom.UNKNOWN
 
+    fun consumePendingCommentId(destination: NavDestination): String? = null
+
     fun speakArticleText(
         text: String,
         title: String,
@@ -557,9 +559,6 @@ expect fun rememberHomeFeedStartupCache(recommendationMode: RecommendationMode):
 
 @Composable
 expect fun rememberHomeUpdateAnnouncement(): HomeUpdateAnnouncement?
-
-@Composable
-expect fun rememberHomeInstalledAtLeastThreeHours(): Boolean
 
 @Composable
 expect fun rememberHomeIsDebuggable(): Boolean
