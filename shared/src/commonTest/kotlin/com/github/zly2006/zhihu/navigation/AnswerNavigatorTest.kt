@@ -9,7 +9,7 @@
 
 package com.github.zly2006.zhihu.navigation
 
-import com.github.zly2006.zhihu.shared.data.DataHolder
+import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel.CachedAnswerContent
 import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
 import io.ktor.client.HttpClient

@@ -74,6 +74,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -92,6 +93,13 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
+import com.github.zly2006.zhihu.data.DataHolder
+import com.github.zly2006.zhihu.data.Feed
+import com.github.zly2006.zhihu.data.RecommendationMode
+import com.github.zly2006.zhihu.data.ZHIHU_ME_URL
+import com.github.zly2006.zhihu.data.ZhihuJson
+import com.github.zly2006.zhihu.data.ZhihuMeNotifications
+import com.github.zly2006.zhihu.data.target
 import com.github.zly2006.zhihu.navigation.Account
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
@@ -100,33 +108,23 @@ import com.github.zly2006.zhihu.navigation.Notification
 import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Search
 import com.github.zly2006.zhihu.navigation.WritePin
-import com.github.zly2006.zhihu.shared.announcement.HOME_NOTIFICATION_ACTION_OPEN_ANSWER
-import com.github.zly2006.zhihu.shared.announcement.HOME_NOTIFICATION_ACTION_OPEN_ARTICLE
-import com.github.zly2006.zhihu.shared.announcement.HOME_NOTIFICATION_ACTION_OPEN_PIN
-import com.github.zly2006.zhihu.shared.announcement.HOME_NOTIFICATION_ACTION_OPEN_UPDATE_SETTINGS
-import com.github.zly2006.zhihu.shared.announcement.HOME_NOTIFICATION_ACTION_OPEN_URL
-import com.github.zly2006.zhihu.shared.announcement.HOME_NOTIFICATION_ACTION_SET_SETTING
-import com.github.zly2006.zhihu.shared.announcement.HOME_NOTIFICATION_CACHE_FILE_NAME
-import com.github.zly2006.zhihu.shared.announcement.HOME_NOTIFICATION_CHECK_INTERVAL_MILLIS
-import com.github.zly2006.zhihu.shared.announcement.OnlineHomeNotificationRepository
-import com.github.zly2006.zhihu.shared.data.DataHolder
-import com.github.zly2006.zhihu.shared.data.Feed
-import com.github.zly2006.zhihu.shared.data.RecommendationMode
-import com.github.zly2006.zhihu.shared.data.ZHIHU_ME_URL
-import com.github.zly2006.zhihu.shared.data.ZhihuJson
-import com.github.zly2006.zhihu.shared.data.ZhihuMeNotifications
-import com.github.zly2006.zhihu.shared.data.navDestination
-import com.github.zly2006.zhihu.shared.data.target
-import com.github.zly2006.zhihu.shared.notification.rememberNotificationSettingsStore
-import com.github.zly2006.zhihu.shared.platform.UserMessageDuration
-import com.github.zly2006.zhihu.shared.platform.rememberAppPrivateDirectory
-import com.github.zly2006.zhihu.shared.platform.rememberExternalUrlOpener
-import com.github.zly2006.zhihu.shared.platform.rememberIsLiteVariant
-import com.github.zly2006.zhihu.shared.platform.rememberSettingsStore
-import com.github.zly2006.zhihu.shared.platform.rememberUserMessageSink
-import com.github.zly2006.zhihu.shared.ui.TopLevelReselectAction
-import com.github.zly2006.zhihu.shared.ui.topLevelReselectAction
-import com.github.zly2006.zhihu.shared.util.Log
+import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_ACTION_OPEN_ANSWER
+import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_ACTION_OPEN_ARTICLE
+import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_ACTION_OPEN_PIN
+import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_ACTION_OPEN_UPDATE_SETTINGS
+import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_ACTION_OPEN_URL
+import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_ACTION_SET_SETTING
+import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_CACHE_FILE_NAME
+import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_CHECK_INTERVAL_MILLIS
+import com.github.zly2006.zhihu.notification.OnlineHomeNotificationRepository
+import com.github.zly2006.zhihu.notification.rememberNotificationSettingsStore
+import com.github.zly2006.zhihu.platform.UserMessageDuration
+import com.github.zly2006.zhihu.platform.rememberAppPrivateDirectory
+import com.github.zly2006.zhihu.platform.rememberExternalUrlOpener
+import com.github.zly2006.zhihu.platform.rememberIsLiteVariant
+import com.github.zly2006.zhihu.platform.rememberSettingsStore
+import com.github.zly2006.zhihu.platform.rememberUserMessageSink
+import com.github.zly2006.zhihu.reading.RegisterReadingQueueSource
 import com.github.zly2006.zhihu.ui.components.AnnouncementCard
 import com.github.zly2006.zhihu.ui.components.AnnouncementCardDefaults
 import com.github.zly2006.zhihu.ui.components.BlockByKeywordsDialog
@@ -139,9 +137,12 @@ import com.github.zly2006.zhihu.ui.components.FeedPullToRefresh
 import com.github.zly2006.zhihu.ui.components.MyModalBottomSheet
 import com.github.zly2006.zhihu.ui.components.PaginatedList
 import com.github.zly2006.zhihu.ui.components.ProgressIndicatorFooter
-import com.github.zly2006.zhihu.ui.components.rememberFeedBlockActions
 import com.github.zly2006.zhihu.ui.subscreens.DEFAULT_FAB_OPACITY
 import com.github.zly2006.zhihu.ui.subscreens.PREF_FAB_OPACITY
+import com.github.zly2006.zhihu.ui.subscreens.SystemUpdateState
+import com.github.zly2006.zhihu.ui.subscreens.rememberSystemUpdateRuntime
+import com.github.zly2006.zhihu.ui.topLevelReselectAction
+import com.github.zly2006.zhihu.util.Log
 import com.github.zly2006.zhihu.viewmodel.feed.BaseFeedViewModel
 import com.github.zly2006.zhihu.viewmodel.feed.HomeFeedInteractionViewModel
 import com.github.zly2006.zhihu.viewmodel.feed.HomeFeedViewModel
@@ -150,8 +151,14 @@ import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.za.AndroidHomeFeedViewModel
 import com.github.zly2006.zhihu.viewmodel.za.MixedHomeFeedViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.io.buffered
 import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.readString
+import kotlinx.io.writeString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
@@ -195,6 +202,7 @@ fun HomeScreen(
     scrollToTopTrigger: Int,
     innerPadding: PaddingValues,
 ) {
+    val readingPlayerOverlayPadding = LocalReadingPlayerOverlayPadding.current
     val navigator = LocalNavigator.current
     val paginationEnvironment = rememberPaginationEnvironment(allowGuestAccess = true)
     val settings = rememberSettingsStore()
@@ -221,10 +229,13 @@ fun HomeScreen(
         RecommendationMode.entries.find {
             it.key == settings.getString("recommendationMode", RecommendationMode.MIXED.key)
         } ?: RecommendationMode.MIXED
-    val startupCache = rememberHomeFeedStartupCache(currentRecommendationMode)
+    val startupCacheFile = remember(appPrivateDirectory, currentRecommendationMode) {
+        Path(appPrivateDirectory, homeFeedStartupCacheFileName(currentRecommendationMode))
+    }
 
-    val account = rememberHomeAccountState()
-    val updateAnnouncement = rememberHomeUpdateAnnouncement()
+    val account = rememberAccountSettingsAccountState().value
+    val updateState by rememberSystemUpdateRuntime().state.collectAsState()
+    val updateAnnouncement = updateState as? SystemUpdateState.UpdateAvailable
     val versionName = rememberAppVersionInfo().substringBefore(' ').takeIf { it.firstOrNull()?.isDigit() == true }
     val onlineNotificationRepository = remember(settings, appPrivateDirectory) {
         OnlineHomeNotificationRepository(
@@ -236,8 +247,6 @@ fun HomeScreen(
         mutableStateOf(onlineNotificationRepository.cachedNotifications())
     }
     val isDebuggable = rememberHomeIsDebuggable()
-    val requestLogin = rememberHomeLoginRequester()
-    val feedBlockActions = rememberFeedBlockActions()
     val isLiteVariant = rememberIsLiteVariant()
     val viewModel: BaseFeedViewModel = when (currentRecommendationMode) {
         RecommendationMode.WEB -> viewModel { HomeFeedViewModel() }
@@ -246,6 +255,11 @@ fun HomeScreen(
         RecommendationMode.MIXED -> viewModel { MixedHomeFeedViewModel() }
     }
     val localHomeViewModel = viewModel as? LocalHomeFeedViewModel
+    val readingQueueSourceId = "home:${currentRecommendationMode.name}"
+    RegisterReadingQueueSource(
+        sourceId = readingQueueSourceId,
+        items = viewModel.displayItems,
+    )
 
     var dismissedUpdateVersion by remember { mutableStateOf<String?>(null) }
     var authorPinAnnouncements by remember { mutableStateOf(emptyList<HomePinAnnouncement>()) }
@@ -282,21 +296,39 @@ fun HomeScreen(
     val latestLoadedDisplayItems = viewModel.latestLoadedDisplayItems.value
     LaunchedEffect(latestLoadedDisplayItems) {
         if (latestLoadedDisplayItems.isNotEmpty()) {
-            startupCache.writeHomeFeedStartupCache(latestLoadedDisplayItems)
+            encodeHomeFeedStartupSnapshot(latestLoadedDisplayItems)?.let { serialized ->
+                withContext(Dispatchers.Default) {
+                    runCatching {
+                        SystemFileSystem.sink(startupCacheFile).buffered().use { it.writeString(serialized) }
+                    }
+                }
+            }
         }
     }
 
     // 初始加载
-    LaunchedEffect(currentRecommendationMode, account.isLoggedIn, autoRefreshOnStartup) {
-        if (!account.isLoggedIn &&
+    LaunchedEffect(currentRecommendationMode, account.login, autoRefreshOnStartup) {
+        if (!account.login &&
             settings.getBoolean("loginForRecommendation", true)
         ) {
-            requestLogin()
+            if (!paginationEnvironment.requestLogin()) {
+                userMessages.showShortMessage("当前平台暂不支持登录")
+            }
         } else if (viewModel.displayItems.isEmpty()) {
             val cachedItems = if (autoRefreshOnStartup) {
                 emptyList()
             } else {
-                startupCache.readHomeFeedStartupCache()
+                withContext(Dispatchers.Default) {
+                    runCatching {
+                        if (SystemFileSystem.exists(startupCacheFile)) {
+                            SystemFileSystem.source(startupCacheFile).buffered().use { source ->
+                                decodeHomeFeedStartupSnapshot(source.readString())
+                            }
+                        } else {
+                            emptyList()
+                        }
+                    }.getOrDefault(emptyList())
+                }
             }
             if (viewModel.displayItems.isEmpty() && cachedItems.isNotEmpty()) {
                 viewModel.addDisplayItems(cachedItems)
@@ -545,7 +577,7 @@ fun HomeScreen(
                     modifier = Modifier.testTag(HOME_FEED_LIST_TAG),
                     contentPadding = PaddingValues(
                         top = scaffoldPadding.calculateTopPadding() + 8.dp,
-                        bottom = innerPadding.calculateBottomPadding(),
+                        bottom = innerPadding.calculateBottomPadding() + readingPlayerOverlayPadding,
                     ),
                     onLoadMore = { viewModel.loadMore(paginationEnvironment) },
                     footer = ProgressIndicatorFooter,
@@ -683,6 +715,7 @@ fun HomeScreen(
                 ) { item ->
                     FeedCard(
                         item,
+                        readingQueueSourceId = readingQueueSourceId,
                         thumbnailUrl = when (val target = item.feed?.target) {
                             is Feed.AnswerTarget -> target.thumbnail
                             else -> null
@@ -693,7 +726,7 @@ fun HomeScreen(
                                     text = { Text("按关键词屏蔽") },
                                     onClick = {
                                         dismissMenu()
-                                        feedBlockActions.handleBlockByKeywords(viewModel, item) { (_, contentInfo) ->
+                                        viewModel.handleBlockByKeywords(paginationEnvironment, userMessages, item) { (_, contentInfo) ->
                                             feedToBlockByKeywords = contentInfo.first to contentInfo.second
                                             showBlockByKeywordsDialog = true
                                         }
@@ -704,7 +737,7 @@ fun HomeScreen(
                                 text = { Text("屏蔽用户") },
                                 onClick = {
                                     dismissMenu()
-                                    feedBlockActions.handleBlockUser(viewModel, item) { authorInfo ->
+                                    viewModel.handleBlockUser(paginationEnvironment, userMessages, item) { authorInfo ->
                                         feedAuthorBlockRequest = FeedAuthorBlockRequest(
                                             type = FeedAuthorBlockType.CONTENT_AUTHOR,
                                             userId = authorInfo.first,
@@ -722,7 +755,7 @@ fun HomeScreen(
                                     text = { Text("屏蔽提问者") },
                                     onClick = {
                                         dismissMenu()
-                                        feedBlockActions.handleBlockQuestionAuthor(viewModel, item) { authorInfo ->
+                                        viewModel.handleBlockQuestionAuthor(paginationEnvironment, userMessages, item) { authorInfo ->
                                             feedAuthorBlockRequest = FeedAuthorBlockRequest(
                                                 type = FeedAuthorBlockType.QUESTION_AUTHOR,
                                                 userId = authorInfo.first,
@@ -744,19 +777,19 @@ fun HomeScreen(
                                     text = { Text("屏蔽「${topic.name}」") },
                                     onClick = {
                                         dismissMenu()
-                                        feedBlockActions.handleBlockTopic(viewModel, topic.id, topic.name)
+                                        viewModel.handleBlockTopic(userMessages, topic.id, topic.name)
                                     },
                                 )
                             }
                         },
-                    ) {
-                        val feed = this.feed
-                        val destination = navDestination
+                    ) { clickedItem, destination ->
+                        val feed = clickedItem.feed
                         if (feed != null) {
 //                            DataHolder.putFeed(feed)
-                            (viewModel as? HomeFeedInteractionViewModel)?.onUiContentClick(paginationEnvironment, feed, item)
+                            (viewModel as? HomeFeedInteractionViewModel)
+                                ?.onUiContentClick(paginationEnvironment, feed, clickedItem)
                         } else {
-                            localHomeViewModel?.onLocalItemOpened(item)
+                            localHomeViewModel?.onLocalItemOpened(clickedItem)
                         }
                         if (destination != null) {
                             navigator.onNavigate(destination)
@@ -773,12 +806,14 @@ fun HomeScreen(
                                 userMessages.showShortMessage("已复制调试数据")
                             },
                             preferenceName = "copyAll",
+                            bottomAvoidance = readingPlayerOverlayPadding,
                         ) {
                             Icon(Icons.Default.CopyAll, contentDescription = "复制")
                         }
                     }
                     DraggableRefreshButton(
                         modifier = Modifier.testTag(HOME_REFRESH_BUTTON_TAG),
+                        bottomAvoidance = readingPlayerOverlayPadding,
                         onClick = { viewModel.refresh(paginationEnvironment) },
                     ) {
                         if (viewModel.isLoading) {
@@ -814,7 +849,7 @@ fun HomeScreen(
                 .align(Alignment.BottomEnd)
                 .padding(
                     end = 16.dp,
-                    bottom = innerPadding.calculateBottomPadding() + 16.dp,
+                    bottom = innerPadding.calculateBottomPadding() + readingPlayerOverlayPadding + 16.dp,
                 ),
             horizontalAlignment = Alignment.End,
         ) {

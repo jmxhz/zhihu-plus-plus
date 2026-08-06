@@ -17,14 +17,14 @@
 
 package com.github.zly2006.zhihu.viewmodel.filter
 
-import com.github.zly2006.zhihu.shared.data.OnlineHistoryAction
-import com.github.zly2006.zhihu.shared.data.OnlineHistoryData
-import com.github.zly2006.zhihu.shared.data.OnlineHistoryExtra
-import com.github.zly2006.zhihu.shared.data.OnlineHistoryHeader
-import com.github.zly2006.zhihu.shared.data.OnlineHistoryItem
-import com.github.zly2006.zhihu.shared.data.OnlineHistoryPage
-import com.github.zly2006.zhihu.shared.data.ZhihuPaging
-import com.github.zly2006.zhihu.shared.filter.ContentOpenEventSupport
+import com.github.zly2006.zhihu.data.OnlineHistoryAction
+import com.github.zly2006.zhihu.data.OnlineHistoryData
+import com.github.zly2006.zhihu.data.OnlineHistoryExtra
+import com.github.zly2006.zhihu.data.OnlineHistoryHeader
+import com.github.zly2006.zhihu.data.OnlineHistoryItem
+import com.github.zly2006.zhihu.data.OnlineHistoryPage
+import com.github.zly2006.zhihu.data.ZhihuPaging
+import com.github.zly2006.zhihu.filter.ContentOpenEventSupport
 import kotlinx.coroutines.test.runTest
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test

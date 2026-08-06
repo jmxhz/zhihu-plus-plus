@@ -16,11 +16,13 @@
  */
 
 package com.github.zly2006.zhihu.ui
+
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,29 +33,21 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.unit.em
+import com.github.zly2006.zhihu.desktop.DesktopAccountStore
+import com.github.zly2006.zhihu.desktop.DesktopLoginRequests
+import com.github.zly2006.zhihu.desktop.openDesktopExternalUrl
 import com.github.zly2006.zhihu.markdown.RenderMarkdown
 import com.github.zly2006.zhihu.navigation.Article
-import com.github.zly2006.zhihu.navigation.TopLevelDestination
-import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
-import com.github.zly2006.zhihu.shared.data.RecommendationMode
-import com.github.zly2006.zhihu.shared.desktop.DesktopAccountStore
-import com.github.zly2006.zhihu.shared.desktop.DesktopLoginRequests
-import com.github.zly2006.zhihu.shared.desktop.desktopZhihuDataFile
-import com.github.zly2006.zhihu.shared.desktop.openDesktopExternalUrl
-import com.github.zly2006.zhihu.shared.notification.NotificationSettingsStore
-import com.github.zly2006.zhihu.shared.platform.UserMessageSink
-import com.github.zly2006.zhihu.shared.platform.rememberUserMessageSink
-import com.github.zly2006.zhihu.shared.util.Log
-import com.github.zly2006.zhihu.ui.subscreens.SystemUpdateState
-import com.github.zly2006.zhihu.ui.subscreens.desktopSystemUpdateState
+import com.github.zly2006.zhihu.notification.NotificationSettingsStore
+import com.github.zly2006.zhihu.platform.UserMessageSink
+import com.github.zly2006.zhihu.platform.rememberUserMessageSink
 import com.github.zly2006.zhihu.ui.subscreens.desktopVersionName
+import com.github.zly2006.zhihu.util.Log
 import com.github.zly2006.zhihu.viewmodel.DesktopPaginationEnvironment
-import com.github.zly2006.zhihu.viewmodel.NotificationViewModel
 import com.github.zly2006.zhihu.viewmodel.filter.desktopContentFilterDatabaseFile
 import com.github.zly2006.zhihu.viewmodel.filter.encodeBlocklistBackup
 import com.github.zly2006.zhihu.viewmodel.filter.getContentFilterDatabase
 import com.github.zly2006.zhihu.viewmodel.filter.importBlocklistBackupFromJsonText
-import io.ktor.client.HttpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -227,64 +221,7 @@ private fun desktopProjectRoots(): List<File> =
         .toList()
 
 @Composable
-actual fun rememberHomeAccountState(): HomeAccountState {
-    val accountStore = remember { DesktopAccountStore() }
-    val account = accountStore.load()
-    return HomeAccountState(
-        isLoggedIn = account.login,
-        avatarUrl = account.profile?.avatarUrl,
-    )
-}
-
-@Composable
-actual fun rememberHomeUpdateAnnouncement(): HomeUpdateAnnouncement? {
-    val updateState by desktopSystemUpdateState.collectAsState()
-    return (updateState as? SystemUpdateState.UpdateAvailable)?.let {
-        HomeUpdateAnnouncement(
-            version = it.version,
-            isNightly = it.isNightly,
-        )
-    }
-}
-
-@Composable
-actual fun rememberHomeFeedStartupCache(recommendationMode: RecommendationMode): HomeFeedStartupCache {
-    val startupCacheFile = remember(recommendationMode) {
-        desktopZhihuDataFile(homeFeedStartupCacheFileName(recommendationMode))
-    }
-    return remember(startupCacheFile) {
-        HomeFeedStartupCache(
-            readHomeFeedStartupCache = {
-                withContext(Dispatchers.IO) {
-                    if (startupCacheFile.exists()) {
-                        decodeHomeFeedStartupSnapshot(startupCacheFile.readText())
-                    } else {
-                        emptyList()
-                    }
-                }
-            },
-            writeHomeFeedStartupCache = { items: List<FeedDisplayItem> ->
-                withContext(Dispatchers.IO) {
-                    val serialized = encodeHomeFeedStartupSnapshot(items)
-                    if (serialized != null) {
-                        runCatching {
-                            startupCacheFile.parentFile?.mkdirs()
-                            startupCacheFile.writeText(serialized)
-                        }
-                    }
-                }
-            },
-        )
-    }
-}
-
-@Composable
 actual fun rememberHomeIsDebuggable(): Boolean = true
-
-@Composable
-actual fun rememberHomeLoginRequester(): () -> Unit = remember {
-    { DesktopLoginRequests.requestLogin() }
-}
 
 @Composable
 actual fun rememberBlocklistRuleImporter(
@@ -357,70 +294,23 @@ private fun chooseBlocklistImportFile(): File? {
 }
 
 @Composable
-actual fun rememberAccountSettingsAccountState(): androidx.compose.runtime.State<AccountSettingsAccountState> =
-    DesktopAccountSettingsState.accountState
-
-@Composable
-actual fun rememberAccountProfileRefresher(): suspend () -> Unit = remember {
-    {
-        DesktopAccountSettingsState.refreshProfile()
+actual fun rememberAccountSettingsAccountState(): androidx.compose.runtime.State<AccountSettingsAccountState> {
+    val accountStore = remember { DesktopAccountStore() }
+    val account = accountStore.accountState.collectAsState()
+    return remember(account) {
+        derivedStateOf { account.value.toAccountSettingsAccountState() }
     }
 }
 
 @Composable
-actual fun rememberAccountLoginRequester(): () -> Unit = remember {
-    {
-        DesktopLoginRequests.requestLogin()
-        DesktopAccountSettingsState.reload()
-    }
-}
-
-@Composable
-actual fun rememberAccountQrLoginRequester(): () -> Unit = rememberAccountLoginRequester()
-
-@Composable
-actual fun rememberAccountLogoutAction(): () -> Unit = remember {
-    {
-        DesktopAccountSettingsState.clear()
-    }
+actual fun rememberAccountQrLoginRequester(): () -> Unit = remember {
+    { DesktopLoginRequests.requestLogin() }
 }
 
 @Composable
 actual fun rememberAppVersionInfo(): String = desktopVersionName()
 
-@Composable
-actual fun rememberMainTabSelector(): (TopLevelDestination) -> Unit = remember {
-    { _: TopLevelDestination -> }
-}
-
-private object DesktopAccountSettingsState {
-    private val store = DesktopAccountStore()
-    val accountState = mutableStateOf(store.load().toAccountSettingsAccountState())
-
-    suspend fun refreshProfile() {
-        val account = store.load()
-        val refreshed = store.refreshAndSaveProfile()
-        accountState.value = if (refreshed != null) {
-            refreshed.toAccountSettingsAccountState()
-        } else {
-            account.toAccountSettingsAccountState()
-        }
-    }
-
-    fun reload() {
-        accountState.value = store.load().toAccountSettingsAccountState()
-    }
-
-    fun clear() {
-        homeFeedStartupCacheFileNames().forEach { fileName ->
-            desktopZhihuDataFile(fileName).delete()
-        }
-        store.clear()
-        accountState.value = AccountSettingsAccountState()
-    }
-}
-
-private fun com.github.zly2006.zhihu.shared.account.ZhihuAccountSession.toAccountSettingsAccountState(): AccountSettingsAccountState =
+private fun com.github.zly2006.zhihu.account.ZhihuAccountSession.toAccountSettingsAccountState(): AccountSettingsAccountState =
     AccountSettingsAccountState(
         login = login,
         username = username,
@@ -431,14 +321,6 @@ private fun com.github.zly2006.zhihu.shared.account.ZhihuAccountSession.toAccoun
 
 @Composable
 actual fun rememberArticleHost(): ArticleHost? = null
-
-@Composable
-actual fun ArticlePreviewPreloadEffect(
-    cached: com.github.zly2006.zhihu.viewmodel.ArticleViewModel.CachedAnswerContent?,
-    isNext: Boolean,
-    title: String,
-    onImageLoadFailed: () -> Unit,
-) = Unit
 
 @Composable
 actual fun ArticleWebViewContent(
@@ -474,7 +356,6 @@ actual fun supportsZhihuHtmlWebView(): Boolean = false
 
 @Composable
 actual fun rememberNotificationEnvironment(
-    viewModel: NotificationViewModel,
     settingsStore: NotificationSettingsStore,
 ): com.github.zly2006.zhihu.viewmodel.NotificationEnvironment {
     val userMessages = rememberUserMessageSink()
@@ -486,15 +367,6 @@ actual fun rememberNotificationEnvironment(
             showFetchFailureMessage = userMessages::showMessage,
         )
     }
-}
-
-@Composable
-actual fun rememberNotificationShowDebugCopy(): Boolean = true
-
-@Composable
-actual fun rememberZhihuHttpClient(): HttpClient {
-    val store = remember { DesktopAccountStore() }
-    return store.httpClient()
 }
 
 @Composable

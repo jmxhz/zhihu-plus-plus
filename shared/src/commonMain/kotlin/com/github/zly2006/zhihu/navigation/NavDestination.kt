@@ -17,7 +17,7 @@
 
 package com.github.zly2006.zhihu.navigation
 
-import com.github.zly2006.zhihu.shared.util.Log
+import com.github.zly2006.zhihu.util.Log
 import io.ktor.http.Url
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -120,6 +120,9 @@ data object Account : TopLevelDestination {
     ) : NavDestination
 
     @Serializable
+    data object ReadingSettings : NavDestination
+
+    @Serializable
     data class RecommendSettings(
         val setting: String = "",
     ) : NavDestination {
@@ -167,6 +170,22 @@ data object Daily : TopLevelDestination {
 data object Notification : NavDestination {
     @Serializable
     data object NotificationSettings : NavDestination
+
+    @Serializable
+    data class Entry(
+        val entryName: String,
+        val title: String,
+    ) : NavDestination
+
+    @Serializable
+    data object Invitations : NavDestination
+
+    @Serializable
+    data class Message(
+        val peerId: String,
+        val name: String = "",
+        val avatarUrl: String = "",
+    ) : NavDestination
 }
 
 @Serializable
@@ -214,6 +233,7 @@ data class Article(
     var authorBio: String = "loading...",
     var avatarSrc: String? = null,
     var excerpt: String? = null,
+    val readingQueueSourceId: String? = null,
 ) : NavDestination {
     override fun hashCode(): Int = id.hashCode()
 
@@ -241,6 +261,7 @@ data class SegmentCommentHolder(
 data class Question(
     val questionId: Long,
     val title: String = "loading...",
+    val readingQueueSourceId: String? = null,
 ) : NavDestination {
     override fun hashCode(): Int = questionId.hashCode()
 
@@ -319,10 +340,19 @@ data class Video(
 @Serializable
 data class Pin(
     val id: Long,
+    val authorName: String = "",
+    val readingQueueSourceId: String? = null,
 ) : NavDestination {
     override fun hashCode(): Int = id.hashCode()
 
     override fun equals(other: Any?): Boolean = other is Pin && other.id == id
+}
+
+fun NavDestination.withReadingQueueSource(sourceId: String?): NavDestination = when (this) {
+    is Article -> copy(readingQueueSourceId = sourceId)
+    is Pin -> copy(readingQueueSourceId = sourceId)
+    is Question -> copy(readingQueueSourceId = sourceId)
+    else -> this
 }
 
 fun resolveContent(url: String): NavDestination? = runCatching { resolveContent(Url(url)) }.getOrNull()
@@ -331,7 +361,25 @@ fun resolveContent(url: Url): NavDestination? {
     val segments = url.segments
     if (url.protocol.name == "http" || url.protocol.name == "https") {
         if (url.host == "zhihu.com" || url.host == "www.zhihu.com") {
-            if (segments.size == 4 &&
+            if (segments.size == 1 && segments[0] == "compose_answer_tab") {
+                return Notification.Invitations
+            } else if (segments.size == 2 && segments[0] == "inbox") {
+                return Notification.Message(
+                    peerId = segments[1],
+                    name = url.parameters["title"].orEmpty(),
+                )
+            } else if (
+                segments.size == 5 &&
+                segments[0] == "notifications" &&
+                segments[1] == "v3" &&
+                segments[2] == "timeline" &&
+                segments[3] == "entry"
+            ) {
+                return Notification.Entry(
+                    entryName = segments[4],
+                    title = url.parameters["title"].orEmpty().ifBlank { "消息" },
+                )
+            } else if (segments.size == 4 &&
                 segments[0] == "question" &&
                 segments[2] == "answer"
             ) {

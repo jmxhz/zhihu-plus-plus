@@ -19,13 +19,18 @@ package com.github.zly2006.zhihu
 
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.github.zly2006.zhihu.data.MobileNotificationContent
+import com.github.zly2006.zhihu.data.MobileNotificationTimelineItem
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
 import com.github.zly2006.zhihu.navigation.CommentHolder
@@ -33,8 +38,6 @@ import com.github.zly2006.zhihu.navigation.Notification
 import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.navigation.resolveContent
-import com.github.zly2006.zhihu.shared.data.MobileNotificationContent
-import com.github.zly2006.zhihu.shared.data.MobileNotificationTimelineItem
 import com.github.zly2006.zhihu.test.MainActivityComposeRule
 import com.github.zly2006.zhihu.test.RecordingNavigator
 import com.github.zly2006.zhihu.test.resetAppPreferences
@@ -63,8 +66,7 @@ class NotificationScreenInstrumentedTest {
     fun notificationScreen_showsStableToolbarActionsWithoutLiveData() {
         /*
          * Expected behavior:
-         * 1. The test preloads one local notification before composing the screen so NotificationScreen
-         *    does not need to fetch live notification data just to render its scaffold.
+         * 1. The test waits for the screen's initial lifecycle refresh, then seeds one local notification.
          * 2. The toolbar should always show the page title plus clickable back and settings actions.
          * 3. The "mark all as read" action should stay hidden while unreadCount remains at its default zero.
          */
@@ -122,12 +124,12 @@ class NotificationScreenInstrumentedTest {
          * 2. The top category row should render that count as a visible badge on the matching category.
          * 3. The badge should be part of the category button, not a separate toolbar count.
          */
-        composeRule.seedNotificationViewModel(
-            unreadCounts = mapOf(MobileNotificationCategory.Like to 2),
-        )
         composeRule.setScreenContent {
             NotificationScreen()
         }
+        composeRule.seedNotificationViewModel(
+            unreadCounts = mapOf(MobileNotificationCategory.Like to 2),
+        )
 
         composeRule.onNodeWithText("2").assertIsDisplayed()
     }
@@ -161,9 +163,12 @@ class NotificationScreenInstrumentedTest {
             ),
         )
         val recordingNavigator = setNotificationScreenContent(notifications)
+        val notificationList = composeRule.onNode(hasScrollAction())
 
         notifications.forEach { notification ->
-            composeRule.onNodeWithText(notification.content!!.title).performClick()
+            val title = notification.content!!.title
+            notificationList.performScrollToNode(hasText(title))
+            composeRule.onNodeWithText(title).assertIsDisplayed().performClick()
         }
 
         assertEquals(4, recordingNavigator.destinations.size)
@@ -257,10 +262,11 @@ class NotificationScreenInstrumentedTest {
     private fun setNotificationScreenContent(
         notifications: List<MobileNotificationTimelineItem> = listOf(notificationFixture()),
     ): RecordingNavigator {
-        composeRule.seedNotificationViewModel(notifications = notifications)
-        return composeRule.setScreenContent {
+        val recordingNavigator = composeRule.setScreenContent {
             NotificationScreen()
         }
+        composeRule.seedNotificationViewModel(notifications = notifications)
+        return recordingNavigator
     }
 
     private fun notificationFixture(
@@ -284,6 +290,14 @@ class NotificationScreenInstrumentedTest {
         unreadCounts: Map<MobileNotificationCategory, Int> = emptyMap(),
         notifications: List<MobileNotificationTimelineItem> = listOf(notificationFixture()),
     ) {
+        waitUntil(
+            "Notification screen did not finish its initial refresh",
+            timeoutMillis = 5_000,
+        ) {
+            ViewModelProvider(activity)[NotificationViewModel::class.java].let { viewModel ->
+                !viewModel.isLoading && viewModel.isEnd
+            }
+        }
         activity.runOnUiThread {
             val viewModel = ViewModelProvider(activity)[NotificationViewModel::class.java]
             viewModel.allData.clear()

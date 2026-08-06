@@ -17,16 +17,16 @@
 
 package com.github.zly2006.zhihu.viewmodel.filter
 
+import com.github.zly2006.zhihu.data.CommonFeed
+import com.github.zly2006.zhihu.data.Feed
+import com.github.zly2006.zhihu.data.FeedDisplayItem
+import com.github.zly2006.zhihu.data.Person
+import com.github.zly2006.zhihu.data.toFeedDisplayItemNavDestinationJson
+import com.github.zly2006.zhihu.filter.ContentOpenEventSupport
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
 import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
-import com.github.zly2006.zhihu.shared.data.CommonFeed
-import com.github.zly2006.zhihu.shared.data.Feed
-import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
-import com.github.zly2006.zhihu.shared.data.Person
-import com.github.zly2006.zhihu.shared.data.toFeedDisplayItemNavDestinationJson
-import com.github.zly2006.zhihu.shared.filter.ContentOpenEventSupport
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlin.io.path.createTempDirectory

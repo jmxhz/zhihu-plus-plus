@@ -24,25 +24,28 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.github.zly2006.zhihu.account.ZhihuIdentityClient
+import com.github.zly2006.zhihu.data.AigcVoteClient
+import com.github.zly2006.zhihu.data.AigcVoteVoter
 import com.github.zly2006.zhihu.data.ContentDetailCache
+import com.github.zly2006.zhihu.data.DataHolder
+import com.github.zly2006.zhihu.data.Feed
+import com.github.zly2006.zhihu.data.FeedDisplayItem
+import com.github.zly2006.zhihu.data.OnlineHistoryDeletePair
+import com.github.zly2006.zhihu.data.ZhihuJson.decodeJson
+import com.github.zly2006.zhihu.data.ZhihuPaging
+import com.github.zly2006.zhihu.data.executeZhihuAuthenticatedRequest
+import com.github.zly2006.zhihu.data.fetchZhihuAuthenticatedJson
 import com.github.zly2006.zhihu.data.fetchZhihuContentDetail
 import com.github.zly2006.zhihu.data.getOrFetchContentDetail
 import com.github.zly2006.zhihu.navigation.AnswerNavigator
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.NavDestination
-import com.github.zly2006.zhihu.shared.aigc.AigcVoteClient
-import com.github.zly2006.zhihu.shared.aigc.AigcVoteVoter
-import com.github.zly2006.zhihu.shared.data.DataHolder
-import com.github.zly2006.zhihu.shared.data.Feed
-import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
-import com.github.zly2006.zhihu.shared.data.OnlineHistoryDeletePair
-import com.github.zly2006.zhihu.shared.data.ZhihuJson.decodeJson
-import com.github.zly2006.zhihu.shared.data.ZhihuPaging
-import com.github.zly2006.zhihu.shared.data.fetchZhihuAuthenticatedJson
-import com.github.zly2006.zhihu.shared.util.Log
-import com.github.zly2006.zhihu.shared.util.signZhihuFetchRequest
 import com.github.zly2006.zhihu.ui.ArticleAnswerSwitchState
 import com.github.zly2006.zhihu.ui.ArticleAnswerTransitionDirection
+import com.github.zly2006.zhihu.util.Log
+import com.github.zly2006.zhihu.util.ZhihuCredentialRefresher
+import com.github.zly2006.zhihu.util.signZhihuFetchRequest
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel.CachedAnswerContent
 import com.github.zly2006.zhihu.viewmodel.local.LocalRecommendationEngine
 import io.ktor.client.HttpClient
@@ -51,6 +54,7 @@ import io.ktor.client.request.delete
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.URLProtocol
@@ -256,6 +260,21 @@ interface ZhihuApiEnvironment {
         }
     }
 
+    suspend fun signedGetText(url: String): String = withAuthenticatedClient { client, cookies ->
+        executeZhihuAuthenticatedRequest(client, url) {
+            method = HttpMethod.Get
+            signZhihuFetchRequest(cookies)
+        }.bodyAsText()
+    }
+
+    suspend fun refreshToken() {
+        val client = httpClient()
+        ZhihuCredentialRefresher.refreshZhihuToken(
+            ZhihuCredentialRefresher.fetchRefreshToken(client),
+            client,
+        )
+    }
+
     suspend fun handleFetchFailure(
         tag: String?,
         error: Exception,
@@ -269,6 +288,31 @@ interface ZhihuApiEnvironment {
         error: Exception,
     ) {
         Log.e(tag ?: "PaginationViewModel", "Failed to decode item: $item", error)
+    }
+}
+
+interface AccountEnvironment {
+    suspend fun refreshAccountProfile() = Unit
+
+    fun requestLogin(): Boolean = false
+
+    fun clearAccountSession() = Unit
+
+    fun currentAccountId(): String = ""
+
+    fun identityClient(): ZhihuIdentityClient? = null
+
+    fun restartApplication() = Unit
+
+    suspend fun verifyLogin(cookies: Map<String, String>): Boolean = false
+
+    fun saveCookies(cookies: Map<String, String>) = Unit
+
+    fun logout() = clearAccountSession()
+
+    fun requestRelogin(): Boolean {
+        clearAccountSession()
+        return requestLogin()
     }
 }
 
@@ -428,11 +472,6 @@ interface ContentBlocklistEnvironment {
         avatarUrl: String? = null,
     ) = Unit
 
-    suspend fun addBlockedTopic(
-        topicId: String,
-        topicName: String,
-    ) = Unit
-
     suspend fun removeBlockedUser(userId: String) = Unit
 
     suspend fun removeBlockedQuestionAuthor(userId: String) = Unit
@@ -514,6 +553,7 @@ interface ArticleLoadEnvironment :
 
 interface PaginationEnvironment :
     ZhihuApiEnvironment,
+    AccountEnvironment,
     MobileHomeFeedEnvironment,
     FeedDisplayEnvironment,
     ContentInteractionEnvironment,

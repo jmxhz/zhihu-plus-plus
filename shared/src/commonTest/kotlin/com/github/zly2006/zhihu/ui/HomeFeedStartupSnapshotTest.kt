@@ -17,14 +17,14 @@
 
 package com.github.zly2006.zhihu.ui
 
+import com.github.zly2006.zhihu.data.CommonFeed
+import com.github.zly2006.zhihu.data.DataHolder
+import com.github.zly2006.zhihu.data.Feed
+import com.github.zly2006.zhihu.data.FeedDisplayItem
+import com.github.zly2006.zhihu.data.Person
+import com.github.zly2006.zhihu.data.RecommendationMode
+import com.github.zly2006.zhihu.data.toFeedDisplayItemNavDestinationJson
 import com.github.zly2006.zhihu.navigation.Search
-import com.github.zly2006.zhihu.shared.data.CommonFeed
-import com.github.zly2006.zhihu.shared.data.DataHolder
-import com.github.zly2006.zhihu.shared.data.Feed
-import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
-import com.github.zly2006.zhihu.shared.data.Person
-import com.github.zly2006.zhihu.shared.data.RecommendationMode
-import com.github.zly2006.zhihu.shared.data.toFeedDisplayItemNavDestinationJson
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull

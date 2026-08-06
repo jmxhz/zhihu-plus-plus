@@ -17,10 +17,10 @@
 
 package com.github.zly2006.zhihu.viewmodel.filter
 
+import com.github.zly2006.zhihu.data.OnlineHistoryItem
+import com.github.zly2006.zhihu.data.OnlineHistoryPage
+import com.github.zly2006.zhihu.filter.ContentOpenEventSupport
 import com.github.zly2006.zhihu.navigation.resolveContent
-import com.github.zly2006.zhihu.shared.data.OnlineHistoryItem
-import com.github.zly2006.zhihu.shared.data.OnlineHistoryPage
-import com.github.zly2006.zhihu.shared.filter.ContentOpenEventSupport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job

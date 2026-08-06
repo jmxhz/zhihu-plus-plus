@@ -133,6 +133,7 @@ import com.fleeksoft.ksoup.Ksoup
 import com.fleeksoft.ksoup.nodes.Element
 import com.fleeksoft.ksoup.nodes.Node
 import com.fleeksoft.ksoup.nodes.TextNode
+import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.CommentHolder
 import com.github.zly2006.zhihu.navigation.LocalNavigator
@@ -142,18 +143,20 @@ import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.navigation.SegmentCommentHolder
 import com.github.zly2006.zhihu.navigation.resolveContent
-import com.github.zly2006.zhihu.shared.data.DataHolder
-import com.github.zly2006.zhihu.shared.platform.PlatformBackHandler
-import com.github.zly2006.zhihu.shared.platform.rememberExternalUrlOpener
-import com.github.zly2006.zhihu.shared.platform.rememberImagePreviewOpener
-import com.github.zly2006.zhihu.shared.platform.rememberImageSaver
-import com.github.zly2006.zhihu.shared.platform.rememberImageSharer
-import com.github.zly2006.zhihu.shared.platform.rememberSettingsStore
-import com.github.zly2006.zhihu.shared.util.twoDigitString
-import com.github.zly2006.zhihu.shared.viewmodel.CommentItem
+import com.github.zly2006.zhihu.platform.PlatformBackHandler
+import com.github.zly2006.zhihu.platform.rememberExternalUrlOpener
+import com.github.zly2006.zhihu.platform.rememberImagePreviewOpener
+import com.github.zly2006.zhihu.platform.rememberImageSaver
+import com.github.zly2006.zhihu.platform.rememberImageSharer
+import com.github.zly2006.zhihu.platform.rememberSettingsStore
+import com.github.zly2006.zhihu.reading.ReadingCommentOrder
+import com.github.zly2006.zhihu.reading.loadReadingPreferences
+import com.github.zly2006.zhihu.reading.saveReadingPreferences
 import com.github.zly2006.zhihu.ui.components.replaceSelection
 import com.github.zly2006.zhihu.ui.subscreens.PREF_FONT_SIZE
 import com.github.zly2006.zhihu.ui.subscreens.PREF_LINE_HEIGHT
+import com.github.zly2006.zhihu.util.twoDigitString
+import com.github.zly2006.zhihu.viewmodel.CommentItem
 import com.github.zly2006.zhihu.viewmodel.comment.BaseCommentViewModel
 import com.github.zly2006.zhihu.viewmodel.comment.ChildCommentViewModel
 import com.github.zly2006.zhihu.viewmodel.comment.CommentSortOrder
@@ -449,6 +452,10 @@ fun CommentScreen(
     onInitialChildCommentResolved: (CommentModel, DataHolder.Comment) -> Unit = { _, _ -> },
 ) {
     val paginationEnvironment = rememberPaginationEnvironment(allowGuestAccess = false)
+    val readingSettings = rememberSettingsStore()
+    val initialReadingCommentOrder = remember(readingSettings) {
+        loadReadingPreferences(readingSettings).commentOrder
+    }
     val resolvedContent = content()
     var isSending by remember { mutableStateOf(false) }
     var replyToComment by remember { mutableStateOf<CommentModel?>(null) }
@@ -496,7 +503,12 @@ fun CommentScreen(
         }
 
         else -> viewModel(key = viewModelKey) {
-            RootCommentViewModel(resolvedContent, initialCommentId)
+            RootCommentViewModel(resolvedContent, initialCommentId).apply {
+                sortOrder = when (initialReadingCommentOrder) {
+                    ReadingCommentOrder.Score -> CommentSortOrder.SCORE
+                    ReadingCommentOrder.Time -> CommentSortOrder.TIME
+                }
+            }
         }
     }
     val restoredListPosition = remember(resolvedContent) {
@@ -882,6 +894,12 @@ fun CommentScreen(
                                                 },
                                                 onClick = {
                                                     viewModel.changeSortOrder(CommentSortOrder.SCORE, paginationEnvironment)
+                                                    saveReadingPreferences(
+                                                        readingSettings,
+                                                        loadReadingPreferences(readingSettings).copy(
+                                                            commentOrder = ReadingCommentOrder.Score,
+                                                        ),
+                                                    )
                                                 },
                                             )
                                             Spacer(Modifier.width(12.dp))
@@ -904,6 +922,12 @@ fun CommentScreen(
                                                 },
                                                 onClick = {
                                                     viewModel.changeSortOrder(CommentSortOrder.TIME, paginationEnvironment)
+                                                    saveReadingPreferences(
+                                                        readingSettings,
+                                                        loadReadingPreferences(readingSettings).copy(
+                                                            commentOrder = ReadingCommentOrder.Time,
+                                                        ),
+                                                    )
                                                 },
                                             )
                                         }
@@ -1221,6 +1245,12 @@ private fun CommentItem(
 ) {
     val navigator = LocalNavigator.current
     val commentData = comment.item
+    val authorPerson =
+        Person(
+            id = commentData.author.id,
+            name = commentData.author.name,
+            urlToken = commentData.author.urlToken,
+        )
     var showMoreMenu by remember(commentData.id) { mutableStateOf(false) }
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -1234,7 +1264,8 @@ private fun CommentItem(
                 contentDescription = "头像",
                 modifier = Modifier
                     .size(36.dp)
-                    .clip(CircleShape),
+                    .clip(CircleShape)
+                    .clickable { navigator.onNavigate(authorPerson) },
                 contentScale = ContentScale.Crop,
             )
             Spacer(modifier = Modifier.width(8.dp))
@@ -1252,15 +1283,7 @@ private fun CommentItem(
                         fontSize = 16.sp,
                         modifier = Modifier
                             .testTag("comment_author_${commentData.id}")
-                            .clickable {
-                                navigator.onNavigate(
-                                    Person(
-                                        id = commentData.author.id,
-                                        name = commentData.author.name,
-                                        urlToken = commentData.author.urlToken,
-                                    ),
-                                )
-                            },
+                            .clickable { navigator.onNavigate(authorPerson) },
                     )
 
                     val authorTag = comment.item.authorTag
@@ -1567,7 +1590,7 @@ private fun AnnotatedString.Builder.processTextWithEmoji(
     }
 }
 
-private fun AnnotatedString.Builder.dfsSimple(
+fun AnnotatedString.Builder.dfsSimple(
     node: Node,
     onNavigate: (NavDestination) -> Unit,
     openExternalUrl: (String) -> Unit,

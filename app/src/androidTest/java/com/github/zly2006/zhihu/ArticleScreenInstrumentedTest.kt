@@ -18,6 +18,8 @@
 package com.github.zly2006.zhihu
 
 import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Log
 import androidx.compose.foundation.ComposeFoundationFlags
@@ -29,13 +31,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.MutableState
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.platform.TextToolbar
@@ -61,32 +66,48 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.markdown.RenderImage
 import com.github.zly2006.zhihu.markdown.RenderMarkdown
 import com.github.zly2006.zhihu.markdown.RenderMarkdownText
 import com.github.zly2006.zhihu.navigation.AnswerNavigator
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
-import com.github.zly2006.zhihu.shared.data.DataHolder
-import com.github.zly2006.zhihu.shared.ui.AnswerDoubleTapAction
+import com.github.zly2006.zhihu.reading.AndroidReadingPlayerBridge
+import com.github.zly2006.zhihu.reading.ContentReadingService
+import com.github.zly2006.zhihu.reading.ReadingContentType
+import com.github.zly2006.zhihu.reading.ReadingPlaybackStatus
+import com.github.zly2006.zhihu.reading.ReadingPlayerState
+import com.github.zly2006.zhihu.reading.ReadingQueueItem
+import com.github.zly2006.zhihu.reading.ReadingQueueSourceRegistry
 import com.github.zly2006.zhihu.test.MainActivityComposeRule
 import com.github.zly2006.zhihu.test.resetAppPreferences
 import com.github.zly2006.zhihu.test.setScreenContent
 import com.github.zly2006.zhihu.ui.ARTICLE_USE_WEBVIEW_PREFERENCE_KEY
+import com.github.zly2006.zhihu.ui.AnswerDoubleTapAction
 import com.github.zly2006.zhihu.ui.ArticleScreen
 import com.github.zly2006.zhihu.ui.PREFERENCE_NAME
 import com.github.zly2006.zhihu.ui.TtsState
+import com.github.zly2006.zhihu.ui.article.ArticleActionsMenu
 import com.github.zly2006.zhihu.ui.rememberArticleTtsState
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel
 import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
 import com.hrm.markdown.renderer.MarkdownImageData
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.CancellationException
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 @RunWith(AndroidJUnit4::class)
 class ArticleScreenInstrumentedTest {
@@ -95,6 +116,7 @@ class ArticleScreenInstrumentedTest {
 
     @Before
     fun setUp() {
+        AndroidReadingPlayerBridge.publish(ReadingPlayerState())
         composeRule.resetAppPreferences()
         composeRule.activity
             .getSharedPreferences(PREFERENCE_NAME, Context.MODE_PRIVATE)
@@ -109,6 +131,18 @@ class ArticleScreenInstrumentedTest {
             .putBoolean(ARTICLE_USE_WEBVIEW_PREFERENCE_KEY, false)
             .putString("answerDoubleTapAction", AnswerDoubleTapAction.Ask.preferenceValue)
             .commit()
+    }
+
+    @After
+    fun tearDown() {
+        composeRule.activity.stopService(Intent(composeRule.activity, ContentReadingService::class.java))
+        AndroidReadingPlayerBridge.publish(ReadingPlayerState())
+        ReadingQueueSourceRegistry.register(FULL_ORIGIN_SOURCE_ID, emptyList())
+        ReadingQueueSourceRegistry.register(PARTIAL_ORIGIN_SOURCE_ID, emptyList())
+        composeRule.runOnIdle {
+            composeRule.activity.articleAnswerSwitchState.navigator = null
+            composeRule.activity.articleAnswerSwitchState.pendingNavigator = null
+        }
     }
 
     @Test
@@ -204,6 +238,7 @@ class ArticleScreenInstrumentedTest {
         ComposeFoundationFlags.isNewContextMenuEnabled = false
         try {
             val textToolbar = CapturingTextToolbar()
+            val selectionColor = Color.Magenta
             val markdown = buildString {
                 appendLine("第一段可见正文")
                 appendLine()
@@ -214,7 +249,13 @@ class ArticleScreenInstrumentedTest {
                 appendLine("末段必须被全选")
             }
             composeRule.setScreenContent {
-                CompositionLocalProvider(LocalTextToolbar provides textToolbar) {
+                CompositionLocalProvider(
+                    LocalTextToolbar provides textToolbar,
+                    LocalTextSelectionColors provides TextSelectionColors(
+                        handleColor = selectionColor,
+                        backgroundColor = selectionColor,
+                    ),
+                ) {
                     RenderMarkdownText(markdown = markdown)
                 }
             }
@@ -225,27 +266,71 @@ class ArticleScreenInstrumentedTest {
             composeRule.runOnIdle {
                 requireNotNull(textToolbar.onSelectAllRequested).invoke()
             }
+            waitUntilSelectionHighlight(
+                text = "第一段可见正文",
+                failureMessage = "Select all did not become visible on the first markdown block",
+            )
             // 全选后滚到底部，覆盖离屏投影与真实 Markdown 块互换时的选择稳定性。
             val scrollContainer = composeRule.onNode(
                 SemanticsMatcher("has vertical scroll axis") { node ->
                     node.config.contains(SemanticsProperties.VerticalScrollAxisRange)
                 },
             )
-            repeat(40) {
+            var scrollAttempts = 0
+            while (scrollAttempts < 40) {
                 val range = scrollContainer
                     .fetchSemanticsNode()
                     .config[SemanticsProperties.VerticalScrollAxisRange]
-                if (range.maxValue() - range.value() <= 1f) return@repeat
+                if (range.maxValue() - range.value() <= 1f) break
                 scrollContainer.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
                     scrollBy(0f, 4_000f)
                 }
                 composeRule.waitForIdle()
+                scrollAttempts++
+            }
+            val finalRange = scrollContainer
+                .fetchSemanticsNode()
+                .config[SemanticsProperties.VerticalScrollAxisRange]
+            assertTrue(
+                "Long markdown did not reach the bottom before copying the selection",
+                finalRange.maxValue() - finalRange.value() <= 1f,
+            )
+            waitUntilSelectionHighlight(
+                text = "末段必须被全选",
+                failureMessage = "Select all did not remain visible after deferred markdown blocks materialized",
+            )
+            val clipboard = composeRule.activity.getSystemService(android.content.ClipboardManager::class.java)
+            clipboard.clearPrimaryClip()
+            composeRule.waitUntil(
+                "System clipboard did not clear before copying the selection",
+                timeoutMillis = 5_000,
+            ) {
+                !clipboard.hasPrimaryClip()
+            }
+            composeRule.waitUntil(
+                "Activity window did not have focus before copying the selection",
+                timeoutMillis = 5_000,
+            ) {
+                composeRule.activity.window.decorView
+                    .hasWindowFocus()
             }
             composeRule.runOnIdle {
                 requireNotNull(textToolbar.onCopyRequested).invoke()
             }
+            composeRule.waitUntil(
+                "Copy did not publish the complete selected markdown to the system clipboard",
+                timeoutMillis = 10_000,
+            ) {
+                val currentText = clipboard.primaryClip
+                    ?.getItemAt(0)
+                    ?.coerceToText(composeRule.activity)
+                    ?.toString()
+                    .orEmpty()
+                currentText.contains("第一段可见正文") &&
+                    currentText.contains("末段必须被全选") &&
+                    Regex("第 (\\d+) 段长文填充正文").findAll(currentText).count() == 120
+            }
 
-            val clipboard = composeRule.activity.getSystemService(android.content.ClipboardManager::class.java)
             val copiedText = clipboard.primaryClip
                 ?.getItemAt(0)
                 ?.coerceToText(composeRule.activity)
@@ -264,6 +349,28 @@ class ArticleScreenInstrumentedTest {
             )
         } finally {
             ComposeFoundationFlags.isNewContextMenuEnabled = previousContextMenuFlag
+        }
+    }
+
+    private fun waitUntilSelectionHighlight(
+        text: String,
+        failureMessage: String,
+    ) {
+        composeRule.waitUntil(failureMessage, timeoutMillis = 5_000) {
+            runCatching {
+                composeRule
+                    .onNodeWithText(text)
+                    .captureToImage()
+                    .toPixelMap()
+                    .let { pixels ->
+                        (0 until pixels.height).any { y ->
+                            (0 until pixels.width).any { x ->
+                                val pixel = pixels[x, y]
+                                pixel.red > 0.9f && pixel.blue > 0.9f && pixel.green < 0.1f
+                            }
+                        }
+                    }
+            }.getOrDefault(false)
         }
     }
 
@@ -461,6 +568,64 @@ class ArticleScreenInstrumentedTest {
 
         composeRule.onNodeWithText("划线片段").assertIsDisplayed()
         composeRule.onNodeWithText("“$FORMATTED_HIGHLIGHT”").assertIsDisplayed()
+    }
+
+    @Test
+    fun highlightedTextDrawsDashesAcrossEveryWrappedLine() {
+        composeRule.setScreenContent {
+            MaterialTheme(
+                colorScheme = lightColorScheme(
+                    outlineVariant = Color.Magenta,
+                ),
+            ) {
+                RenderMarkdown(
+                    html = WRAPPED_HIGHLIGHT_PARAGRAPH_HTML,
+                    modifier = androidx.compose.ui.Modifier
+                        .width(220.dp)
+                        .testTag("wrapped-highlight-article"),
+                    enableScroll = false,
+                )
+            }
+        }
+
+        val paragraph = composeRule.onNodeWithText(WRAPPED_HIGHLIGHT_PARAGRAPH)
+        val layouts = mutableListOf<TextLayoutResult>()
+        paragraph.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { getTextLayoutResult ->
+            assertTrue(getTextLayoutResult(layouts))
+        }
+        val layout = layouts.single()
+        val highlightStart = WRAPPED_HIGHLIGHT_PREFIX.length
+        val highlightEnd = highlightStart + WRAPPED_HIGHLIGHT.length
+        val startLine = layout.getLineForOffset(highlightStart)
+        val endLine = layout.getLineForOffset(highlightEnd - 1)
+        assertTrue("Fixture must wrap the highlighted text onto at least three lines", endLine - startLine >= 2)
+
+        val image = composeRule
+            .onNodeWithTag("wrapped-highlight-article")
+            .captureToImage()
+        val output = File(
+            requireNotNull(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null)),
+            "segment-highlight-wrapped.png",
+        )
+        FileOutputStream(output).use { stream ->
+            image.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, stream)
+        }
+
+        val pixels = image.toPixelMap()
+        for (line in startLine..endLine) {
+            val top = (layout.getLineBottom(line) - 6f).toInt().coerceAtLeast(0)
+            val bottom = (layout.getLineBottom(line) + 2f).toInt().coerceAtMost(pixels.height - 1)
+            val magentaPixels = (top..bottom).sumOf { y ->
+                (0 until pixels.width).count { x ->
+                    val color = pixels[x, y]
+                    color.red > 0.8f && color.green < 0.2f && color.blue > 0.8f
+                }
+            }
+            assertTrue(
+                "Highlighted visual line $line must contain visible dash pixels; found $magentaPixels. Screenshot: ${output.absolutePath}",
+                magentaPixels >= 4,
+            )
+        }
     }
 
     @Test
@@ -811,6 +976,236 @@ class ArticleScreenInstrumentedTest {
     }
 
     @Test
+    fun pausedContinuousReadingOnAnotherQueueItemUsesStopActionInArticleMenu() {
+        val viewModel = seededAnswerViewModel(ANSWER)
+        AndroidReadingPlayerBridge.publish(
+            ReadingPlayerState(
+                status = ReadingPlaybackStatus.Paused,
+                queue = listOf(
+                    ReadingQueueItem(
+                        contentType = ReadingContentType.Answer,
+                        id = ANSWER.id,
+                        title = "离线 Answer 标题",
+                        author = "离线答主",
+                    ),
+                    ReadingQueueItem(
+                        contentType = ReadingContentType.Answer,
+                        id = NEXT_ANSWER.id,
+                        title = "下一个离线回答",
+                        author = "下一个作者",
+                    ),
+                ),
+                currentIndex = 1,
+            ),
+        )
+        composeRule.setScreenContent {
+            Scaffold(
+                modifier = androidx.compose.ui.Modifier
+                    .fillMaxSize(),
+            ) { _ ->
+                ArticleScreen(
+                    article = ANSWER,
+                    viewModel = viewModel,
+                )
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("更多选项").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("停止朗读").assertIsDisplayed()
+        composeRule.onNodeWithText("暂停朗读").assertDoesNotExist()
+        composeRule.onNodeWithText("继续朗读").assertDoesNotExist()
+        composeRule.onNodeWithText("停止朗读").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            !AndroidReadingPlayerBridge.state.value.hasSession
+        }
+    }
+
+    @Test
+    fun emptyAnswerQueueProviderDoesNotFallBackToPaginationIds() {
+        val viewModel = seededAnswerViewModel(ANSWER)
+        composeRule.runOnIdle {
+            viewModel.forceAnswerNextIdsForTest(listOf(901L, 902L))
+        }
+        setArticleActionsMenu(
+            viewModel = viewModel,
+            answerQueueFallbackProvider = { _ -> emptyList() },
+        )
+
+        composeRule.onNodeWithText("开始连续朗读").assertIsDisplayed().performClick()
+        waitForReadingQueue(listOf(ANSWER.id))
+
+        composeRule.onNodeWithText("停止朗读").assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            !AndroidReadingPlayerBridge.state.value.hasSession
+        }
+    }
+
+    @Test
+    fun answerQueueProviderKeepsCollectionOrderWithoutPaginationItems() {
+        val viewModel = seededAnswerViewModel(ANSWER)
+        composeRule.runOnIdle {
+            viewModel.forceAnswerNextIdsForTest(listOf(901L, 902L))
+        }
+        setArticleActionsMenu(
+            viewModel = viewModel,
+            answerQueueFallbackProvider = { _ ->
+                listOf(
+                    Article(type = ArticleType.Answer, id = 801L, title = "收藏回答一"),
+                    Article(type = ArticleType.Answer, id = 802L, title = "收藏回答二"),
+                )
+            },
+        )
+
+        composeRule.onNodeWithText("开始连续朗读").assertIsDisplayed().performClick()
+        waitForReadingQueue(listOf(ANSWER.id, 801L, 802L))
+
+        composeRule.onNodeWithText("停止朗读").assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            !AndroidReadingPlayerBridge.state.value.hasSession
+        }
+    }
+
+    @Test
+    fun failingAnswerQueueProviderStillStartsCurrentAnswer() {
+        val viewModel = seededAnswerViewModel(ANSWER)
+        setArticleActionsMenu(
+            viewModel = viewModel,
+            answerQueueFallbackProvider = { error("离线分页失败") },
+        )
+
+        composeRule.onNodeWithText("开始连续朗读").assertIsDisplayed().performClick()
+        waitForReadingQueue(listOf(ANSWER.id))
+    }
+
+    @Test
+    fun matchingOriginAtQueueLimitDoesNotLoadQuestionFallback() {
+        val viewModel = seededAnswerViewModel(ANSWER)
+        val sourceId = FULL_ORIGIN_SOURCE_ID
+        val sourceAnswer = ANSWER.copy(readingQueueSourceId = sourceId)
+        var providerCalls = 0
+        ReadingQueueSourceRegistry.register(
+            sourceId = sourceId,
+            items = listOf(
+                ReadingQueueItem(ReadingContentType.Answer, id = ANSWER.id),
+                ReadingQueueItem(ReadingContentType.Answer, id = NEXT_ANSWER.id),
+                ReadingQueueItem(ReadingContentType.Answer, id = 779L),
+                ReadingQueueItem(ReadingContentType.Answer, id = 780L),
+                ReadingQueueItem(ReadingContentType.Answer, id = 781L),
+            ),
+        )
+        setArticleActionsMenu(
+            viewModel = viewModel,
+            article = sourceAnswer,
+            answerQueueFallbackProvider = {
+                providerCalls++
+                error("来源队列足够时不应加载 fallback")
+            },
+        )
+
+        composeRule.onNodeWithText("开始连续朗读").assertIsDisplayed().performClick()
+        waitForReadingQueue(listOf(ANSWER.id, NEXT_ANSWER.id, 779L, 780L, 781L))
+        composeRule.runOnIdle { assertEquals(0, providerCalls) }
+    }
+
+    @Test
+    fun partialMatchingOriginLoadsRequestedRemainderAndFillsQueue() {
+        val viewModel = seededAnswerViewModel(ANSWER)
+        val sourceId = PARTIAL_ORIGIN_SOURCE_ID
+        val sourceAnswer = ANSWER.copy(readingQueueSourceId = sourceId)
+        var requestedLimit = 0
+        ReadingQueueSourceRegistry.register(
+            sourceId = sourceId,
+            items = listOf(
+                ReadingQueueItem(ReadingContentType.Answer, id = ANSWER.id),
+                ReadingQueueItem(ReadingContentType.Answer, id = NEXT_ANSWER.id),
+            ),
+        )
+        setArticleActionsMenu(
+            viewModel = viewModel,
+            article = sourceAnswer,
+            answerQueueFallbackProvider = { limit ->
+                requestedLimit = limit
+                listOf(
+                    NEXT_ANSWER,
+                    Article(type = ArticleType.Answer, id = 779L),
+                    Article(type = ArticleType.Answer, id = 780L),
+                    Article(type = ArticleType.Answer, id = 781L),
+                )
+            },
+        )
+
+        composeRule.onNodeWithText("开始连续朗读").assertIsDisplayed().performClick()
+        waitForReadingQueue(listOf(ANSWER.id, NEXT_ANSWER.id, 779L, 780L, 781L))
+        composeRule.runOnIdle { assertEquals(4, requestedLimit) }
+    }
+
+    @Test
+    fun cancelledAnswerQueueProviderDoesNotStartReadingSession() {
+        val viewModel = seededAnswerViewModel(ANSWER)
+        val providerCalled = AtomicBoolean(false)
+        setArticleActionsMenu(
+            viewModel = viewModel,
+            answerQueueFallbackProvider = {
+                providerCalled.set(true)
+                throw CancellationException("测试取消")
+            },
+        )
+
+        composeRule.onNodeWithText("开始连续朗读").assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) { providerCalled.get() }
+
+        assertFalse(AndroidReadingPlayerBridge.state.value.hasSession)
+    }
+
+    @Test
+    fun articleScreenUsesSharedAnswerNavigatorSnapshotForReadingQueue() {
+        val viewModel = seededAnswerViewModel(ANSWER)
+        val snapshotCurrentId = AtomicLong(-1L)
+        val snapshotLimit = AtomicInteger(0)
+        val sharedNavigator = object : AnswerNavigator(
+            sourceName = "此问题",
+            environment = NO_OP_API_ENVIRONMENT,
+        ) {
+            override suspend fun loadNext(): Article? = null
+
+            override suspend fun prefetchNext(currentArticleId: Long) = Unit
+
+            override suspend fun remainingAnswersSnapshot(
+                currentArticleId: Long,
+                limit: Int,
+            ): List<Article> {
+                snapshotCurrentId.set(currentArticleId)
+                snapshotLimit.set(limit)
+                return listOf(
+                    NEXT_ANSWER,
+                    Article(type = ArticleType.Answer, id = 779L),
+                ).take(limit)
+            }
+        }
+        composeRule.activity.runOnUiThread {
+            composeRule.activity.articleAnswerSwitchState.pendingNavigator = sharedNavigator
+        }
+        composeRule.setScreenContent {
+            Scaffold(
+                modifier = androidx.compose.ui.Modifier
+                    .fillMaxSize(),
+            ) { _ ->
+                ArticleScreen(
+                    article = ANSWER,
+                    viewModel = viewModel,
+                )
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("更多选项").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("开始连续朗读").assertIsDisplayed().performClick()
+
+        waitForReadingQueue(listOf(ANSWER.id, NEXT_ANSWER.id, 779L))
+        assertEquals(ANSWER.id, snapshotCurrentId.get())
+        assertEquals(4, snapshotLimit.get())
+    }
+
+    @Test
     fun skipAnswerButtonNavigatesToPrefetchedNextAnswerOffline() {
         val viewModel = seededAnswerViewModel(ANSWER)
         val nextAnswer = ArticleViewModel.CachedAnswerContent(
@@ -927,6 +1322,42 @@ class ArticleScreenInstrumentedTest {
         }
     }
 
+    private fun setArticleActionsMenu(
+        viewModel: ArticleViewModel,
+        article: Article = ANSWER,
+        answerQueueFallbackProvider: suspend (limit: Int) -> List<Article>,
+    ) {
+        composeRule.setScreenContent {
+            Scaffold(
+                modifier = androidx.compose.ui.Modifier
+                    .fillMaxSize(),
+            ) { _ ->
+                ArticleActionsMenu(
+                    article = article,
+                    viewModel = viewModel,
+                    answerQueueFallbackProvider = answerQueueFallbackProvider,
+                    showMenu = true,
+                    onDismissRequest = {},
+                    onSummaryRequest = {},
+                    onAigcFlagRequest = {},
+                    onExportRequest = {},
+                )
+            }
+        }
+    }
+
+    private fun waitForReadingQueue(expectedIds: List<Long>) {
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            AndroidReadingPlayerBridge.state.value.queue
+                .map(ReadingQueueItem::id) == expectedIds
+        }
+        assertEquals(
+            expectedIds,
+            AndroidReadingPlayerBridge.state.value.queue
+                .map(ReadingQueueItem::id),
+        )
+    }
+
     private fun dragSkipAnswerButtonBy(deltaX: Float) {
         composeRule
             .onNodeWithContentDescription("下一个回答")
@@ -1003,7 +1434,15 @@ class ArticleScreenInstrumentedTest {
         (ttsStateField.get(this) as MutableState<TtsState>).value = state
     }
 
+    private fun ArticleViewModel.forceAnswerNextIdsForTest(ids: List<Long>) {
+        val setter = ArticleViewModel::class.java.getDeclaredMethod("setAnswerNextIds", List::class.java)
+        setter.isAccessible = true
+        setter.invoke(this, ids)
+    }
+
     private companion object {
+        const val FULL_ORIGIN_SOURCE_ID = "instrumented:reading-origin"
+        const val PARTIAL_ORIGIN_SOURCE_ID = "instrumented:partial-reading-origin"
         const val ISSUE_495_BENCHMARK_TAG = "Issue495Benchmark"
         const val ISSUE_495_FIRST_FRAME_LIMIT_MS = 5_000L
         const val HIGHLIGHTED_PARAGRAPH =
@@ -1012,6 +1451,12 @@ class ArticleScreenInstrumentedTest {
         const val FORMATTED_HIGHLIGHT_PREFIX = "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW"
         const val FORMATTED_HIGHLIGHT = "划线命中"
         const val FORMATTED_HIGHLIGHT_PARAGRAPH = "$FORMATTED_HIGHLIGHT_PREFIX$FORMATTED_HIGHLIGHT 后缀"
+        const val WRAPPED_HIGHLIGHT_PREFIX = "普通前缀 "
+        const val WRAPPED_HIGHLIGHT =
+            "这是位于段落中间并且需要跨越多个视觉行的划线内容，用于验证每一行都能完整绘制虚线。"
+        const val WRAPPED_HIGHLIGHT_SUFFIX = " 普通后缀"
+        const val WRAPPED_HIGHLIGHT_PARAGRAPH =
+            "$WRAPPED_HIGHLIGHT_PREFIX$WRAPPED_HIGHLIGHT$WRAPPED_HIGHLIGHT_SUFFIX"
         val HIGHLIGHTED_PARAGRAPH_HTML =
             """
             <p data-pid="WGd4cbq-"><span class="highlight-wrap other has-comments"
@@ -1035,6 +1480,15 @@ class ArticleScreenInstrumentedTest {
                 data-highlight-comment-count="1"
                 data-highlight-content-id="777"
                 data-highlight-content-type="answer">$FORMATTED_HIGHLIGHT</span> 后缀</p>
+            """.trimIndent()
+        val WRAPPED_HIGHLIGHT_PARAGRAPH_HTML =
+            """
+            <p>$WRAPPED_HIGHLIGHT_PREFIX<span class="highlight-wrap other has-comments"
+                data-highlight-id="wrapped-highlight"
+                data-highlight-like-count="1"
+                data-highlight-comment-count="1"
+                data-highlight-content-id="778"
+                data-highlight-content-type="answer">$WRAPPED_HIGHLIGHT</span>$WRAPPED_HIGHLIGHT_SUFFIX</p>
             """.trimIndent()
 
         val ARTICLE = Article(

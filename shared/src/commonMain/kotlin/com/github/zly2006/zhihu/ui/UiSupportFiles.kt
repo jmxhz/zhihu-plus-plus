@@ -33,6 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.fleeksoft.ksoup.Ksoup
+import com.github.zly2006.zhihu.data.DataHolder
+import com.github.zly2006.zhihu.filter.ContentOpenFrom
 import com.github.zly2006.zhihu.markdown.RenderMarkdown
 import com.github.zly2006.zhihu.navigation.AnswerNavigator
 import com.github.zly2006.zhihu.navigation.Article
@@ -41,22 +43,17 @@ import com.github.zly2006.zhihu.navigation.NavDestination
 import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.navigation.TopLevelDestination
-import com.github.zly2006.zhihu.shared.data.DataHolder
-import com.github.zly2006.zhihu.shared.data.FeedDisplayItem
-import com.github.zly2006.zhihu.shared.data.RecommendationMode
-import com.github.zly2006.zhihu.shared.filter.ContentOpenFrom
-import com.github.zly2006.zhihu.shared.platform.SettingsStore
-import com.github.zly2006.zhihu.shared.platform.UserMessageSink
-import com.github.zly2006.zhihu.shared.platform.rememberSettingsStore
-import com.github.zly2006.zhihu.shared.ui.ANSWER_DOUBLE_TAP_ACTION_PREFERENCE_KEY
-import com.github.zly2006.zhihu.shared.ui.AnswerDoubleTapAction
+import com.github.zly2006.zhihu.platform.SettingsStore
+import com.github.zly2006.zhihu.platform.UserMessageSink
+import com.github.zly2006.zhihu.platform.rememberSettingsStore
+import com.github.zly2006.zhihu.ui.ANSWER_DOUBLE_TAP_ACTION_PREFERENCE_KEY
+import com.github.zly2006.zhihu.ui.AnswerDoubleTapAction
 import com.github.zly2006.zhihu.ui.components.ANSWER_SWITCH_SENSITIVITY_PREFERENCE_KEY
 import com.github.zly2006.zhihu.ui.components.DEFAULT_ANSWER_SWITCH_SENSITIVITY
 import com.github.zly2006.zhihu.ui.components.normalizedAnswerSwitchSensitivity
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel.CachedAnswerContent
 import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
 import com.github.zly2006.zhihu.viewmodel.getOrFetchContentDetail
-import io.ktor.client.HttpClient
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -256,14 +253,6 @@ private fun SettingsStore.answerDoubleTapAction(): AnswerDoubleTapAction =
 
 @Composable
 expect fun rememberArticleHost(): ArticleHost?
-
-@Composable
-expect fun ArticlePreviewPreloadEffect(
-    cached: CachedAnswerContent?,
-    isNext: Boolean,
-    title: String,
-    onImageLoadFailed: () -> Unit,
-)
 
 @Composable
 expect fun ArticleWebViewContent(
@@ -473,19 +462,6 @@ fun rememberZhihuMainPreferenceState(
     readSnapshot: () -> ZhihuMainPreferenceSnapshot,
 ): ZhihuMainPreferenceState = remember { ZhihuMainPreferenceState(readSnapshot) }
 
-/**
- * 当前平台注入 [ZhihuMain] 的导航回调。
- *
- * common UI 的所有点击都通过这个对象发起导航。平台代码负责把旧的顶层目的地映射到
- * [com.github.zly2006.zhihu.navigation.MainTabs]、记录内容打开来源，并处理视频这类平台专用目标。
- */
-data class ZhihuMainNavigationState(
-    val mainTabNavigationTarget: TopLevelDestination?,
-    val navigate: (NavDestination) -> Unit,
-    val setCurrentMainTabOpenFrom: (String?) -> Unit,
-    val consumeMainTabNavigationTarget: (TopLevelDestination) -> Unit,
-)
-
 data class AccountSettingsAccountState(
     val login: Boolean = false,
     val username: String = "",
@@ -499,22 +475,10 @@ data class AccountSettingsAccountState(
 expect fun rememberAccountSettingsAccountState(): State<AccountSettingsAccountState>
 
 @Composable
-expect fun rememberAccountProfileRefresher(): suspend () -> Unit
-
-@Composable
-expect fun rememberAccountLoginRequester(): () -> Unit
-
-@Composable
 expect fun rememberAccountQrLoginRequester(): () -> Unit
 
 @Composable
-expect fun rememberAccountLogoutAction(): () -> Unit
-
-@Composable
 expect fun rememberAppVersionInfo(): String
-
-@Composable
-expect fun rememberMainTabSelector(): (TopLevelDestination) -> Unit
 
 fun noopSettingsStore(): SettingsStore = SettingsStore(
     getBoolean = { _, defaultValue -> defaultValue },
@@ -536,35 +500,8 @@ fun noopSettingsStore(): SettingsStore = SettingsStore(
 internal const val PEOPLE_PROFILE_INCLUDE_PATH =
     "allow_message,is_followed,is_following,is_org,is_blocking,badge_v2,answer_count,follower_count,following_count,articles_count,question_count,pins_count"
 
-data class HomeAccountState(
-    val isLoggedIn: Boolean,
-    val avatarUrl: String?,
-)
-
-data class HomeUpdateAnnouncement(
-    val version: String,
-    val isNightly: Boolean,
-)
-
-@Composable
-expect fun rememberHomeAccountState(): HomeAccountState
-
-data class HomeFeedStartupCache(
-    val readHomeFeedStartupCache: suspend () -> List<FeedDisplayItem>,
-    val writeHomeFeedStartupCache: suspend (List<FeedDisplayItem>) -> Unit,
-)
-
-@Composable
-expect fun rememberHomeFeedStartupCache(recommendationMode: RecommendationMode): HomeFeedStartupCache
-
-@Composable
-expect fun rememberHomeUpdateAnnouncement(): HomeUpdateAnnouncement?
-
 @Composable
 expect fun rememberHomeIsDebuggable(): Boolean
-
-@Composable
-expect fun rememberHomeLoginRequester(): () -> Unit
 
 @Composable
 expect fun rememberCommentEmojiInlineContent(emojiKeys: Set<String>): Map<String, InlineTextContent>
@@ -588,9 +525,6 @@ expect fun rememberBlocklistRuleImporter(
 
 @Composable
 expect fun rememberBlocklistRuleExporter(): suspend () -> String
-
-@Composable
-expect fun rememberZhihuHttpClient(): HttpClient
 
 /**
  * 沉浸式阅读时控制系统栏（状态栏/导航栏）的显隐。
