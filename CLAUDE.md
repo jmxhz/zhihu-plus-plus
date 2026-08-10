@@ -4,7 +4,7 @@
 
 ### 上游同步发布边界
 
-同步上游或发布 fork Release 时，只构建和发布 Android Lite 的 ARM64-v8a APK，资产名固定为 `zhihu++-lite-arm64-v8a.apk`。不得构建或发布 Full APK、通用或其他 ABI APK、mapping 压缩包、桌面端 JAR。必须等待 GitHub Actions 终态，并确认 Release 仅包含这一项资产后，才能声明发布完成。
+同步上游或发布 fork Release 时，只构建和发布 Android Lite 的 ARM64-v8a APK，产物文件名必须带版本号，固定格式 `zhihu++-lite-arm64-v8a-<版本>.apk`（如 `zhihu++-lite-arm64-v8a-0.27.1.apk`）。不得构建或发布 Full APK、通用或其他 ABI APK、mapping 压缩包、桌面端 JAR。必须等待 GitHub Actions 终态，并确认 Release 仅包含这一项版本化资产、正文写有详细发布说明后，才能声明发布完成。
 
 ## 经验总结
 
@@ -406,4 +406,4 @@ python3 .agents/skills/ui-review-memory/memory_store.py update-status \
 2. 每次 fork 发布都必须包含上述定制功能及对应回归测试；不得仅发布未适配的上游代码。
 3. 发布前至少运行 `:shared:jvmTest`、`assembleLiteDebug`、`:shared:ktlintCheck`、`:shared-local-db:ktlintCommonMainSourceSetCheck`、`:shared-local-db:ktlintNativeMainSourceSetCheck` 和 `git diff --check`。
 4. 有可用 Android 设备时，按 `.agents/skills/ui-test/SKILL.md` 使用 testTag 验证打开回答、返回、刷新和继续滚动流程，不得使用硬编码点击坐标。
-5. Release 必须发布到 fork，并附带当次构建的 Lite APK。Release 说明应写明上游基线、保留的定制功能、验证结果和未验证平台。
+5. Release 必须发布到 fork，并附带当次构建的 Lite APK；产物文件名必须带版本号（`zhihu++-lite-arm64-v8a-<版本>.apk`）。Release 说明必须写详细：上游基线、本次同步内容、保留的定制功能、验证结果、产物文件名与 SHA-256、已知风险与未验证平台。

@@ -124,13 +124,18 @@ jobs:
             echo "Expected exactly one Lite ARM64-v8a APK, found ${#apks[@]}" >&2
             exit 1
           fi
-          mv "${apks[0]}" app/build/upload/zhihu++-lite-arm64-v8a.apk
+          if [[ "${{ inputs.release }}" == "true" ]]; then
+            version="${{ inputs.release_tag || github.ref_name }}"
+            mv "${apks[0]}" "app/build/upload/zhihu++-lite-arm64-v8a-${version}.apk"
+          else
+            mv "${apks[0]}" app/build/upload/zhihu++-lite-arm64-v8a.apk
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.date_today }} - ${{ env.repository_name }} - ${{ inputs.name }}
-          path: app/build/upload/zhihu++-lite-arm64-v8a.apk
+          path: app/build/upload/*.apk
 
       # Delete existing nightly release
       - name: Delete existing nightly release
@@ -268,6 +273,6 @@ jobs:
             仅提供 Android Lite ARM64-v8a 安装包。
 
             ${{ steps.release_notes.outputs.result }}
-          files: app/build/upload/zhihu++-lite-arm64-v8a.apk
+          files: app/build/upload/zhihu++-lite-arm64-v8a-*.apk
           fail_on_unmatched_files: true
           prerelease: false
