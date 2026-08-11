@@ -28,11 +28,13 @@ import com.github.zly2006.zhihu.data.target
 import com.github.zly2006.zhihu.data.toFeedDisplayItemNavDestinationJson
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.Pin
+import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.navigation.resolveContent
 import com.github.zly2006.zhihu.viewmodel.ContentInteractionEnvironment
 import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.feed.BaseFeedViewModel
 import com.github.zly2006.zhihu.viewmodel.feed.HomeFeedInteractionViewModel
+import com.github.zly2006.zhihu.viewmodel.feed.dedupeHomeFeedQuestionCards
 import com.github.zly2006.zhihu.viewmodel.feed.homeFeedContentKey
 import com.github.zly2006.zhihu.viewmodel.feed.replaceHomeFeedItemsWithFilteredResult
 import com.github.zly2006.zhihu.viewmodel.feed.shouldContinueHomeFeedAfterPage
@@ -43,6 +45,7 @@ import io.ktor.client.request.forms.formData
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.setBody
+import io.ktor.http.Url
 import io.ktor.http.decodeURLPart
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.CancellationException
@@ -117,20 +120,28 @@ class AndroidHomeFeedViewModel :
         // 前台先做本地已读过滤，再立即展示
         val existingKeys = displayItems.mapTo(hashSetOf()) { it.homeFeedContentKey }
         val filterResult = environment.applyHomeFeedFilters(itemsToDisplay)
+        // 同一问题已有可见回答时丢弃问题卡，避免“问题卡 + 回答卡”同标题重复展示。
+        val foregroundItems = dedupeHomeFeedQuestionCards(filterResult.foregroundItems, displayItems)
+        val filteredItems = dedupeHomeFeedQuestionCards(filterResult.filteredItems, displayItems)
         if (!filterResult.reverseBlock) {
             withContext(Dispatchers.Main) {
-                addDisplayItems(filterResult.foregroundItems)
+                addDisplayItems(foregroundItems)
             }
         }
 
         if (filterResult.reverseBlock) {
-            addDisplayItems(filterResult.filteredItems)
+            addDisplayItems(filteredItems)
         }
 
         // 移除被过滤的条目，并更新已保留条目的 raw 内容
         withContext(Dispatchers.Main) {
-            displayItems.replaceHomeFeedItemsWithFilteredResult(filterResult)
-            latestLoadedDisplayItems.value = filterResult.filteredItems
+            displayItems.replaceHomeFeedItemsWithFilteredResult(
+                filterResult.copy(
+                    foregroundItems = foregroundItems,
+                    filteredItems = filteredItems,
+                ),
+            )
+            latestLoadedDisplayItems.value = filteredItems
         }
 
         lastPaging = if ("paging" in jojo) {
@@ -138,7 +149,7 @@ class AndroidHomeFeedViewModel :
         } else {
             null
         }
-        return filterResult.filteredItems.any { it.homeFeedContentKey !in existingKeys }
+        return filteredItems.any { it.homeFeedContentKey !in existingKeys }
     }
 
     override suspend fun recordContentInteraction(environment: ContentInteractionEnvironment, feed: Feed) {
@@ -183,6 +194,11 @@ fun parseMobileHomeFeedDisplayItem(card: JsonObject): FeedDisplayItem? {
             .substringAfter("route_url=")
     val routeUrl = route.decodeURLPart()
     val routeDest = resolveContent(routeUrl) ?: return null
+    val questionId = when (routeDest) {
+        is Question -> routeDest.questionId
+        is Article -> extractQuestionIdFromRoute(routeUrl)
+        else -> null
+    }
     val children = card["children"]?.jsonArray?.map { it.jsonObject } ?: return null
     val extra = if (routeDest is Pin) {
         card["extra"]?.let { ZhihuJson.decodeJson<MobileHomeCardExtra>(it) }
@@ -297,6 +313,7 @@ fun parseMobileHomeFeedDisplayItem(card: JsonObject): FeedDisplayItem? {
 
     return FeedDisplayItem(
         navDestinationJson = routeDest.toFeedDisplayItemNavDestinationJson(),
+        questionId = questionId,
         avatarSrc = avatar,
         authorName = authorName,
         summary = summary,
@@ -354,6 +371,30 @@ private data class MobileHomeImage(
     val width: Int = 0,
     val height: Int = 0,
 )
+
+/**
+ * 从已解码的路由字符串中提取问题 ID（仅回答类路由）。
+ */
+internal fun extractQuestionIdFromRoute(decodedRoute: String): Long? = runCatching {
+    val url = Url(decodedRoute)
+    val segments = url.segments
+    when {
+        url.protocol.name in listOf("http", "https") &&
+            url.host in listOf("zhihu.com", "www.zhihu.com") &&
+            segments.size >= 4 &&
+            segments[0] == "question" &&
+            segments[2] == "answer" ->
+            segments[1].toLong()
+
+        url.protocol.name == "zhihu" &&
+            url.host in listOf("question", "questions") &&
+            segments.size >= 3 &&
+            (segments[1] == "answer" || segments[1] == "answers") ->
+            segments[0].toLong()
+
+        else -> null
+    }
+}.getOrNull()
 
 /**
  * Find the first JsonObject in the list where the value associated with [key] matches [value].

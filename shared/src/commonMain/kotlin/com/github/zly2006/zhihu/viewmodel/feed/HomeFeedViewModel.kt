@@ -198,22 +198,30 @@ class HomeFeedViewModel :
                 .map { feed -> createDisplayItem(environment, feed) }
 
             val filterResult = environment.applyHomeFeedFilters(newItems)
+            // 同一问题已有可见回答时丢弃问题卡，避免“问题卡 + 回答卡”同标题重复展示。
+            val foregroundItems = dedupeHomeFeedQuestionCards(filterResult.foregroundItems, displayItems)
+            val filteredItems = dedupeHomeFeedQuestionCards(filterResult.filteredItems, displayItems)
             if (!filterResult.reverseBlock) {
                 withContext(Dispatchers.Main) {
-                    addDisplayItems(filterResult.foregroundItems)
+                    addDisplayItems(foregroundItems)
                 }
             }
 
             if (filterResult.reverseBlock) {
-                addDisplayItems(filterResult.filteredItems)
+                addDisplayItems(filteredItems)
             }
 
             // 移除被过滤的条目，并更新已保留条目的 raw 内容
             withContext(Dispatchers.Main) {
-                displayItems.replaceHomeFeedItemsWithFilteredResult(filterResult)
-                latestLoadedDisplayItems.value = filterResult.filteredItems
+                displayItems.replaceHomeFeedItemsWithFilteredResult(
+                    filterResult.copy(
+                        foregroundItems = foregroundItems,
+                        filteredItems = filteredItems,
+                    ),
+                )
+                latestLoadedDisplayItems.value = filteredItems
             }
-            lastPageProducedVisibleItems = filterResult.filteredItems.any {
+            lastPageProducedVisibleItems = filteredItems.any {
                 it.homeFeedContentKey !in existingKeys
             }
         }

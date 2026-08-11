@@ -480,10 +480,23 @@ fun resolveContent(url: Url): NavDestination? {
                 else -> return null
             }
             return CommentHolder(commentId = commentId, article = content)
-        } else if (url.host == "answers") {
+        } else if (url.host == "answers" || url.host == "answer") {
             val answerId = segments[0].toLong()
             return Article(type = ArticleType.Answer, id = answerId)
         } else if (url.host == "questions") {
+            // zhihu://questions/{questionId}/answers/{answerId} 是回答路由，不能解析成问题。
+            if (segments.size >= 3 && (segments[1] == "answer" || segments[1] == "answers")) {
+                val answerId = segments[2].toLongOrNull() ?: return null
+                return Article(type = ArticleType.Answer, id = answerId)
+            }
+            val questionId = segments[0].toLong()
+            return Question(questionId)
+        } else if (url.host == "question") {
+            // zhihu://question/{questionId}/answer/{answerId} 是回答路由。
+            if (segments.size >= 3 && (segments[1] == "answer" || segments[1] == "answers")) {
+                val answerId = segments[2].toLongOrNull() ?: return null
+                return Article(type = ArticleType.Answer, id = answerId)
+            }
             val questionId = segments[0].toLong()
             return Question(questionId)
         } else if (url.host == "feed") {

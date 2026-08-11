@@ -31,6 +31,7 @@ data class FeedDisplayItem(
     val authorName: String? = null,
     val authorBadgeV2: DataHolder.BadgeV2? = null,
     val isFiltered: Boolean = false,
+    val questionId: Long? = null,
     val content: String? = null,
     var raw: DataHolder.Content? = null,
 ) {
@@ -94,6 +95,7 @@ fun Feed.toDisplayItem(
         authorName = target.author?.name,
         authorBadgeV2 = target.author?.badgeV2,
         feed = this,
+        questionId = (target as? Feed.QuestionTarget)?.id,
     )
 }
 
@@ -126,6 +128,7 @@ private fun Feed.toTargetDisplayItem(
             authorName = target.author?.name,
             authorBadgeV2 = target.author?.badgeV2,
             feed = this,
+            questionId = (target as? Feed.AnswerTarget)?.question?.id ?: (target as? Feed.QuestionTarget)?.id,
         )
 
         is Feed.PinTarget -> {

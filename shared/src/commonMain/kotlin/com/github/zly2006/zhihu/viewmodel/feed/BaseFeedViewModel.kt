@@ -33,6 +33,7 @@ import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.PaginationViewModel
 import com.github.zly2006.zhihu.viewmodel.filter.BlockedTopic
 import com.github.zly2006.zhihu.viewmodel.filter.ContentDetailProvider
+import com.github.zly2006.zhihu.viewmodel.filter.ContentType
 import com.github.zly2006.zhihu.viewmodel.filter.getContentFilterDatabase
 import com.github.zly2006.zhihu.viewmodel.filter.resolveContentIdentity
 import com.github.zly2006.zhihu.viewmodel.getOrFetchContentDetail
@@ -217,6 +218,22 @@ internal val FeedDisplayItem.homeFeedContentKey: String
     get() = resolveContentIdentity().let { identity ->
         if (identity.type == "unknown") stableKey else "${identity.type}:${identity.id}"
     }
+
+internal fun dedupeHomeFeedQuestionCards(
+    candidates: List<FeedDisplayItem>,
+    alreadyVisible: Collection<FeedDisplayItem>,
+): List<FeedDisplayItem> {
+    val answeredQuestionIds = (alreadyVisible.asSequence() + candidates.asSequence())
+        .filter { it.resolveContentIdentity().type == ContentType.ANSWER }
+        .mapNotNull { it.questionId }
+        .toHashSet()
+    if (answeredQuestionIds.isEmpty()) return candidates
+    return candidates.filterNot { candidate ->
+        candidate.resolveContentIdentity().type == ContentType.QUESTION &&
+            candidate.questionId != null &&
+            candidate.questionId in answeredQuestionIds
+    }
+}
 
 internal fun shouldContinueHomeFeedAfterPage(
     pagesFetched: Int,
