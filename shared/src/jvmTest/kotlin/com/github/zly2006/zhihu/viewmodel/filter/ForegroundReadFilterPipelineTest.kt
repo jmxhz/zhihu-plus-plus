@@ -36,10 +36,56 @@ import kotlin.test.assertEquals
 class ForegroundReadFilterPipelineTest {
     @Test
     fun disabledOrReverseBlockReturnsItemsWithoutRecording() = runTest {
-        val fixture = fixture(settings = FeedFilterSettings(enableContentFilter = false))
-        val item = item("item", 1)
+        listOf(
+            FeedFilterSettings(enableContentFilter = false),
+            FeedFilterSettings(reverseBlock = true),
+        ).forEach { settings ->
+            val fixture = fixture(settings)
+            val item = item("item", 1)
 
-        assertEquals(listOf(item), fixture.pipeline().filter(listOf(item)))
+            assertEquals(listOf(item), fixture.pipeline().filter(listOf(item)))
+            assertEquals(0, fixture.database.contentFilterDao().getRecordCount())
+            fixture.database.close()
+        }
+    }
+
+    @Test
+    fun blocksReadAnswerWhenContentFilterDisabled() = runTest {
+        val fixture = fixture(settings = FeedFilterSettings(enableContentFilter = false))
+        val openedAnswer = answerItem("opened", answerId = 1, questionId = 10)
+        val otherAnswer = answerItem("other", answerId = 2, questionId = 10)
+        fixture.database.contentOpenEventDao().insert(
+            ContentOpenEvent(
+                contentType = ContentType.ANSWER,
+                contentId = "1",
+                questionId = 10,
+                openFrom = "test",
+            ),
+        )
+
+        val result = fixture.pipeline().filter(listOf(openedAnswer, otherAnswer))
+
+        assertEquals(listOf("other"), result.map { it.title })
+        assertEquals(0, fixture.database.contentFilterDao().getRecordCount())
+        fixture.database.close()
+    }
+
+    @Test
+    fun blocksReadAnswerWhenReverseBlockEnabled() = runTest {
+        val fixture = fixture(settings = FeedFilterSettings(reverseBlock = true))
+        val item = answerItem("opened", answerId = 1, questionId = 10, isFollowing = true)
+        fixture.database.contentOpenEventDao().insert(
+            ContentOpenEvent(
+                contentType = ContentType.ANSWER,
+                contentId = "1",
+                questionId = 10,
+                openFrom = "test",
+            ),
+        )
+
+        val result = fixture.pipeline().filter(listOf(item))
+
+        assertEquals(emptyList(), result)
         assertEquals(0, fixture.database.contentFilterDao().getRecordCount())
         fixture.database.close()
     }

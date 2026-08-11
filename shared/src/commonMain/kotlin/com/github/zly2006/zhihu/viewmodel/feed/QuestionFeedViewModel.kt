@@ -24,6 +24,7 @@ import com.github.zly2006.zhihu.data.Feed
 import com.github.zly2006.zhihu.data.FeedDisplayItem
 import com.github.zly2006.zhihu.data.navDestination
 import com.github.zly2006.zhihu.data.target
+import com.github.zly2006.zhihu.filter.ContentOpenEventSupport
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
 import com.github.zly2006.zhihu.navigation.QuestionAnswerNavigator
@@ -66,21 +67,27 @@ open class QuestionFeedViewModel(
 
     fun createAnswerNavigatorFor(
         item: FeedDisplayItem,
-        environment: ZhihuApiEnvironment,
+        environment: PaginationEnvironment,
     ): QuestionAnswerNavigator? {
         val destination = item.navDestination as? Article ?: return null
         if (destination.type != ArticleType.Answer) return null
         val index = displayItems.indexOfFirst { it.stableKey == item.stableKey }
         if (index < 0) return null
+        environment.scheduleCloudReadHistorySync()
+        val readAnswerIds = ContentOpenEventSupport.answerIdsFromContentKeys(
+            ContentOpenEventSupport.answerContentKeysFromDestinations(environment.localHistory()),
+        )
         return QuestionAnswerNavigator(
             questionId = questionId,
             initialNextAnswers = displayItems
                 .drop(index + 1)
-                .mapNotNull { it.navDestination as? Article },
+                .mapNotNull { it.navDestination as? Article }
+                .filterNot { it.id in readAnswerIds },
             initialPreviousAnswers = displayItems
                 .take(index)
                 .asReversed()
-                .mapNotNull { it.navDestination as? Article },
+                .mapNotNull { it.navDestination as? Article }
+                .filterNot { it.id in readAnswerIds },
             initialNextUrl = lastPaging?.next.orEmpty(),
             order = sortOrder,
             environment = environment,

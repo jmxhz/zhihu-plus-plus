@@ -47,6 +47,7 @@ class QuestionAnswerNavigatorTest {
             environment = NoopEnvironment,
         )
 
+        navigator.prefetchPrevious(102L)
         assertEquals(101L, navigator.previousAnswerPreview?.article?.id)
         assertEquals(103L, navigator.loadNext()?.id)
         assertEquals(104L, navigator.loadNext()?.id)
@@ -156,7 +157,7 @@ class QuestionAnswerNavigatorTest {
     }
 
     @Test
-    fun newlyDiscoveredPreviousAnswerInvalidatesCachedPreviousContent() = runTest {
+    fun globallyReadCandidateIsNotExposedAsPreviousPreview() = runTest {
         val navigator = QuestionAnswerNavigator(
             questionId = 1L,
             initialNextAnswers = listOf(answer(103L)),
@@ -167,8 +168,7 @@ class QuestionAnswerNavigatorTest {
 
         assertEquals(emptyList(), navigator.remainingAnswersSnapshot(102L, limit = 1))
 
-        assertNull(navigator.previousAnswerContent)
-        assertEquals(103L, navigator.previousAnswerPreview?.article?.id)
+        assertNull(navigator.previousAnswerPreview)
     }
 
     @Test
@@ -233,6 +233,7 @@ class QuestionAnswerNavigatorTest {
             environment = NoopEnvironment,
         )
 
+        navigator.prefetchPrevious(103L)
         assertEquals(101L, navigator.previousAnswerPreview?.article?.id)
         assertEquals(103L, navigator.loadNext()?.id)
         assertEquals(104L, navigator.loadNext()?.id)
@@ -336,6 +337,80 @@ class QuestionAnswerNavigatorTest {
         navigator.pushAnswer(answer(101L).toCachedContent())
         assertEquals(105L, navigator.loadNext()?.id)
         assertNull(navigator.loadNext())
+    }
+
+    @Test
+    fun globalReadAnswersAreExcludedFromBothInitialPreviousAndNextCandidates() = runTest {
+        val openedAnswerIds = setOf(101L, 103L)
+        val navigator = QuestionAnswerNavigator(
+            questionId = 1L,
+            initialNextAnswers = listOf(answer(103L), answer(104L), answer(105L)),
+            initialPreviousAnswers = listOf(answer(101L), answer(102L), answer(100L)),
+            getAlreadyOpenedAnswerIds = { ids -> ids.filter { it in openedAnswerIds }.toSet() },
+            environment = NoopEnvironment,
+        )
+
+        navigator.prefetchPrevious(100L)
+        assertEquals(102L, navigator.previousAnswerPreview?.article?.id)
+        assertEquals(
+            listOf(104L, 105L),
+            navigator.remainingAnswersSnapshot(100L, limit = 8).map(Article::id),
+        )
+        assertEquals(104L, navigator.loadNext()?.id)
+        assertEquals(105L, navigator.loadNext()?.id)
+        assertNull(navigator.loadNext())
+    }
+
+    @Test
+    fun currentSessionAnswerHistoryStillSupportsBackAndForward() = runTest {
+        val navigator = QuestionAnswerNavigator(
+            questionId = 1L,
+            getAlreadyOpenedAnswerIds = { ids -> ids.filter { it == 101L || it == 102L }.toSet() },
+            environment = NoopEnvironment,
+        )
+        navigator.pushAnswer(answer(101L).toCachedContent())
+        navigator.pushAnswer(answer(102L).toCachedContent())
+        navigator.pushAnswer(answer(103L).toCachedContent())
+
+        assertEquals(102L, navigator.goToPrevious()?.article?.id)
+        assertEquals(101L, navigator.goToPrevious()?.article?.id)
+        assertEquals(102L, navigator.goToNext()?.article?.id)
+        assertEquals(103L, navigator.goToNext()?.article?.id)
+    }
+
+    @Test
+    fun reenteringAnswerPageSkipsPreviousSessionReadAnswerSeeds() = runTest {
+        val openedAnswerIds = mutableSetOf(101L, 102L)
+        val firstNavigator = QuestionAnswerNavigator(
+            questionId = 1L,
+            initialNextAnswers = listOf(answer(103L), answer(104L), answer(105L)),
+            initialPreviousAnswers = listOf(answer(102L), answer(101L)),
+            getAlreadyOpenedAnswerIds = { ids -> ids.filter { it in openedAnswerIds }.toSet() },
+            environment = NoopEnvironment,
+        )
+        firstNavigator.pushAnswer(answer(102L).toCachedContent())
+        assertEquals(103L, firstNavigator.loadNext()?.id)
+        firstNavigator.pushAnswer(answer(103L).toCachedContent())
+        assertEquals(104L, firstNavigator.loadNext()?.id)
+        firstNavigator.pushAnswer(answer(104L).toCachedContent())
+        openedAnswerIds += 103L
+        openedAnswerIds += 104L
+
+        val reopenedNavigator = QuestionAnswerNavigator(
+            questionId = 1L,
+            initialNextAnswers = listOf(answer(102L), answer(103L), answer(104L), answer(105L)),
+            initialPreviousAnswers = listOf(answer(103L), answer(102L), answer(101L)),
+            getAlreadyOpenedAnswerIds = { ids -> ids.filter { it in openedAnswerIds }.toSet() },
+            environment = NoopEnvironment,
+        )
+        reopenedNavigator.prefetchPrevious(104L)
+        assertNull(reopenedNavigator.previousAnswerPreview)
+        assertEquals(
+            listOf(105L),
+            reopenedNavigator.remainingAnswersSnapshot(104L, limit = 8).map(Article::id),
+        )
+        assertEquals(105L, reopenedNavigator.loadNext()?.id)
+        assertNull(reopenedNavigator.loadNext())
     }
 
     private fun answer(id: Long) = Article(id = id, type = ArticleType.Answer)

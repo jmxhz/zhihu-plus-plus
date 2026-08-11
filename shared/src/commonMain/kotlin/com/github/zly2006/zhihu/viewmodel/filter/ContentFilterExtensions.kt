@@ -42,9 +42,6 @@ class ForegroundReadFilterPipeline(
         items: List<FeedDisplayItem>,
         extraReadContentKeys: Set<String> = emptySet(),
     ): List<FeedDisplayItem> {
-        if (settings.reverseBlock || !settings.enableContentFilter) {
-            return items
-        }
         if (items.isEmpty()) return items
 
         val itemIdentityPairs = items.map { item -> item to item.resolveContentIdentity() }
@@ -58,6 +55,15 @@ class ForegroundReadFilterPipeline(
                 .getReadContentKeysByKeys(contentKeys)
                 .toSet() +
             extraReadContentKeys
+
+        if (settings.reverseBlock || !settings.enableContentFilter) {
+            // 已读回答不出现在首页是硬性规则，不随内容过滤总开关或反向过滤模式旁路。
+            val filteredPairs = itemIdentityPairs.filterNot { (_, identity) ->
+                identity.type == ContentType.ANSWER &&
+                    ContentOpenEventSupport.buildContentKey(identity.type, identity.id) in openedContentKeys
+            }
+            return filteredPairs.map { (item, _) -> item }
+        }
         val viewedContentIds = contentFilterManager.getAlreadyViewedContentIds(
             itemIdentityPairs.map { (_, identity) -> identity.type to identity.id },
         )

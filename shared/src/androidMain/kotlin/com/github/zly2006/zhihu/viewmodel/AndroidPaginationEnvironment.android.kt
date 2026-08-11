@@ -410,12 +410,8 @@ open class SharedAndroidPaginationEnvironment(
         val settings = feedDisplaySettings()
         val filterSettings = context.contentFilterSettings()
         val filterDatabase = getContentFilterDatabase(context)
-        val readContentKeys = if (filterSettings.reverseBlock || !filterSettings.enableContentFilter) {
-            emptySet()
-        } else {
-            scheduleCloudReadHistorySync()
-            homeFeedReadContentKeys()
-        }
+        scheduleCloudReadHistorySync()
+        val readContentKeys = homeFeedReadContentKeys()
         val foregroundItems = ForegroundReadFilterPipeline(
             settings = filterSettings,
             contentFilterManager = ContentFilterManager(filterDatabase.contentFilterDao()),

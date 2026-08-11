@@ -32,8 +32,8 @@ import com.github.zly2006.zhihu.filter.ContentOpenEventSupport
 import com.github.zly2006.zhihu.util.Log
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel.CachedAnswerContent
 import com.github.zly2006.zhihu.viewmodel.CollectionItem
+import com.github.zly2006.zhihu.viewmodel.HistoryEnvironment
 import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
-import com.github.zly2006.zhihu.viewmodel.filter.ContentType
 import com.github.zly2006.zhihu.viewmodel.filter.getContentFilterDatabase
 import com.github.zly2006.zhihu.viewmodel.getOrFetchContentDetail
 import kotlinx.coroutines.sync.Mutex
@@ -240,16 +240,16 @@ class QuestionAnswerNavigator(
     initialPreviousAnswers: List<Article> = emptyList(),
     initialNextUrl: String = "",
     private val order: String? = null,
-    private val getAlreadyOpenedAnswerIds: suspend (List<Long>) -> Set<Long> = { answerIds ->
-        ContentOpenEventSupport
-            .getAlreadyOpenedContentIds(
-                database = getContentFilterDatabase(),
-                content = answerIds.map { ContentType.ANSWER to it.toString() },
-            ).mapNotNull { key ->
-                key.substringAfter(':', "").toLongOrNull()
-            }.toSet()
-    },
     environment: ZhihuApiEnvironment,
+    private val getAlreadyOpenedAnswerIds: suspend (List<Long>) -> Set<Long> = { answerIds ->
+        ContentOpenEventSupport.getAlreadyOpenedAnswerIds(
+            database = getContentFilterDatabase(),
+            answerIds = answerIds,
+            extraReadContentKeys = ContentOpenEventSupport.answerContentKeysFromDestinations(
+                (environment as? HistoryEnvironment)?.localHistory().orEmpty(),
+            ),
+        )
+    },
 ) : AnswerNavigator("此问题", environment) {
     private val pendingInitialNextAnswers = ArrayDeque<Article>().also { deque ->
         initialNextAnswers
@@ -258,15 +258,17 @@ class QuestionAnswerNavigator(
     }
     private val hasInitialNextAnswers = pendingInitialNextAnswers.isNotEmpty()
     private val destinations = ArrayDeque<Article>()
-    private val previousQueue = mutableStateListOf<Article>().also { list ->
+    private val pendingInitialPreviousAnswers = mutableListOf<Article>().also { list ->
         list.addAll(initialPreviousAnswers.filter { it.type == ArticleType.Answer })
     }
+    private val previousQueue = mutableStateListOf<Article>()
     private var nextUrl: String = initialNextUrl
     private val enqueuedNextIds = mutableSetOf<Long>()
     private val enqueuedPrevIds = mutableSetOf<Long>().also { set ->
-        set.addAll(previousQueue.map { it.id })
+        set.addAll(pendingInitialPreviousAnswers.map { it.id })
     }
     private val knownOpenedIds = mutableSetOf<Long>()
+    private var previousDestinationsInitialized = false
     private var initialNextAnswersProcessed = false
     private var nextSourceExhausted = false
     private val destinationsMutex = Mutex()
@@ -316,6 +318,19 @@ class QuestionAnswerNavigator(
             endorsements = detail.endorsementItems,
             sourceLabel = sourceName,
         )
+    }
+
+    private suspend fun ensurePreviousDestinationsLocked() {
+        if (previousDestinationsInitialized) return
+        val pendingIds = pendingInitialPreviousAnswers.map { it.id }
+        val openedIds = getAlreadyOpenedAnswerIds(pendingIds)
+        knownOpenedIds += openedIds
+        pendingInitialPreviousAnswers.forEach { article ->
+            if (article.id !in openedIds) {
+                previousQueue.add(article)
+            }
+        }
+        previousDestinationsInitialized = true
     }
 
     private suspend fun ensureDestinationsLocked(
@@ -399,6 +414,7 @@ class QuestionAnswerNavigator(
     }
 
     override suspend fun loadPrevious(): CachedAnswerContent? = destinationsMutex.withLock {
+        ensurePreviousDestinationsLocked()
         val prefetched = previousAnswerContent
         if (prefetched != null) {
             previousAnswerContent = null
@@ -431,6 +447,7 @@ class QuestionAnswerNavigator(
     }
 
     override suspend fun prefetchPrevious(currentArticleId: Long) = destinationsMutex.withLock {
+        ensurePreviousDestinationsLocked()
         if (previousAnswerContent != null) return@withLock
         val article = previousQueue.firstOrNull() ?: return@withLock
         try {

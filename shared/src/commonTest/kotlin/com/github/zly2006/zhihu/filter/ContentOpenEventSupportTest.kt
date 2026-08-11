@@ -30,7 +30,13 @@ import com.github.zly2006.zhihu.navigation.Notification
 import com.github.zly2006.zhihu.navigation.Person
 import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
+import com.github.zly2006.zhihu.viewmodel.filter.CloudReadHistoryDao
+import com.github.zly2006.zhihu.viewmodel.filter.CloudReadHistoryRecord
+import com.github.zly2006.zhihu.viewmodel.filter.CloudReadHistorySyncState
+import com.github.zly2006.zhihu.viewmodel.filter.ContentOpenEvent
+import com.github.zly2006.zhihu.viewmodel.filter.ContentOpenEventDao
 import com.github.zly2006.zhihu.viewmodel.filter.ContentType
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -164,7 +170,53 @@ class ContentOpenEventSupportTest {
     }
 
     @Test
-    fun partitionQuestionAnswerCandidatesMovesOpenedAnswersToPreviousAndKeepsFreshNext() {
+    fun answerIdsFromContentKeysKeepsOnlyAnswerIds() {
+        val ids = ContentOpenEventSupport.answerIdsFromContentKeys(
+            setOf(
+                "answer:11",
+                "article:12",
+                "question:13",
+                "answer:bad",
+            ),
+        )
+
+        assertEquals(setOf(11L), ids)
+    }
+
+    @Test
+    fun getAlreadyOpenedAnswerIdsMergesContentOpenCloudAndLocalReadKeys() = runTest {
+        val contentOpenEventDao = object : ContentOpenEventDao {
+            override suspend fun insert(event: ContentOpenEvent): Long = 0L
+
+            override suspend fun getOpenedContentKeysByKeys(keys: List<String>): List<String> =
+                keys.filter { it == "answer:31" }
+        }
+        val cloudReadHistoryDao = object : CloudReadHistoryDao {
+            override suspend fun upsertRecords(records: List<CloudReadHistoryRecord>) = Unit
+
+            override suspend fun getReadContentKeysByKeys(keys: List<String>): List<String> =
+                keys.filter { it == "answer:32" || it == "answer:33" }
+
+            override suspend fun getRecord(contentType: String, contentId: String): CloudReadHistoryRecord? = null
+
+            override suspend fun upsertSyncState(state: CloudReadHistorySyncState) = Unit
+
+            override suspend fun getSyncState(syncKey: String): CloudReadHistorySyncState? = null
+
+            override suspend fun getRecordCount(): Int = 0
+        }
+        val ids = ContentOpenEventSupport.getAlreadyOpenedAnswerIds(
+            contentOpenEventDao = contentOpenEventDao,
+            cloudReadHistoryDao = cloudReadHistoryDao,
+            answerIds = listOf(31L, 32L, 33L, 34L),
+            extraReadContentKeys = setOf("answer:34", "question:99"),
+        )
+
+        assertEquals(setOf(31L, 32L, 33L, 34L), ids)
+    }
+
+    @Test
+    fun partitionQuestionAnswerCandidatesExcludesOpenedAnswersFromPreviousAndNext() {
         val partition = ContentOpenEventSupport.partitionQuestionAnswerCandidates(
             candidates = listOf(
                 Article(type = ArticleType.Answer, id = 10L),
@@ -177,13 +229,7 @@ class ContentOpenEventSupportTest {
             currentArticleId = 10L,
         )
 
-        assertEquals(
-            listOf(
-                Article(type = ArticleType.Answer, id = 11L),
-                Article(type = ArticleType.Answer, id = 12L),
-            ),
-            partition.previousCandidates,
-        )
+        assertEquals(emptyList(), partition.previousCandidates)
         assertEquals(
             listOf(Article(type = ArticleType.Answer, id = 13L)),
             partition.nextCandidates,

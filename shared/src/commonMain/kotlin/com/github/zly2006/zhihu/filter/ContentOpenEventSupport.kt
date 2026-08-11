@@ -27,8 +27,10 @@ import com.github.zly2006.zhihu.navigation.Notification
 import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.navigation.resolveContent
+import com.github.zly2006.zhihu.viewmodel.filter.CloudReadHistoryDao
 import com.github.zly2006.zhihu.viewmodel.filter.ContentFilterDatabase
 import com.github.zly2006.zhihu.viewmodel.filter.ContentOpenEvent
+import com.github.zly2006.zhihu.viewmodel.filter.ContentOpenEventDao
 import com.github.zly2006.zhihu.viewmodel.filter.ContentType
 
 data class TrackedContentIdentity(
@@ -134,22 +136,76 @@ object ContentOpenEventSupport {
             )
     }
 
+    fun answerIdsFromContentKeys(keys: Iterable<String>): Set<Long> =
+        keys
+            .mapNotNull { key ->
+                if (key.startsWith("${ContentType.ANSWER}:")) {
+                    key.substringAfter(':').toLongOrNull()
+                } else {
+                    null
+                }
+            }.toSet()
+
+    suspend fun getAlreadyOpenedContentIds(
+        contentOpenEventDao: ContentOpenEventDao,
+        cloudReadHistoryDao: CloudReadHistoryDao,
+        content: List<Pair<String, String>>,
+        extraReadContentKeys: Set<String> = emptySet(),
+    ): Set<String> {
+        if (content.isEmpty()) {
+            return emptySet()
+        }
+        val idsToCheck = content
+            .map { (targetType, targetId) ->
+                "$targetType:$targetId"
+            }.toSet()
+        val keysToCheck = idsToCheck.toList()
+        val openedKeys = mutableSetOf<String>()
+        openedKeys += contentOpenEventDao.getOpenedContentKeysByKeys(keysToCheck)
+        openedKeys += cloudReadHistoryDao.getReadContentKeysByKeys(keysToCheck)
+        openedKeys += extraReadContentKeys
+        return openedKeys.filterTo(mutableSetOf()) { it in idsToCheck }
+    }
+
     suspend fun getAlreadyOpenedContentIds(
         database: ContentFilterDatabase,
         content: List<Pair<String, String>>,
-    ): Set<String> = run {
-        if (content.isEmpty()) {
-            return@run emptySet()
-        }
-        val idsToCheck = content.map { (targetType, targetId) ->
-            "$targetType:$targetId"
-        }
-        database
-            .contentOpenEventDao()
-            .getOpenedContentKeysByKeys(idsToCheck)
-            .toSet()
-    }
+        extraReadContentKeys: Set<String> = emptySet(),
+    ): Set<String> = getAlreadyOpenedContentIds(
+        contentOpenEventDao = database.contentOpenEventDao(),
+        cloudReadHistoryDao = database.cloudReadHistoryDao(),
+        content = content,
+        extraReadContentKeys = extraReadContentKeys,
+    )
 
+    suspend fun getAlreadyOpenedAnswerIds(
+        contentOpenEventDao: ContentOpenEventDao,
+        cloudReadHistoryDao: CloudReadHistoryDao,
+        answerIds: List<Long>,
+        extraReadContentKeys: Set<String> = emptySet(),
+    ): Set<Long> = answerIdsFromContentKeys(
+        getAlreadyOpenedContentIds(
+            contentOpenEventDao = contentOpenEventDao,
+            cloudReadHistoryDao = cloudReadHistoryDao,
+            content = answerIds.map { ContentType.ANSWER to it.toString() },
+            extraReadContentKeys = extraReadContentKeys,
+        ),
+    )
+
+    suspend fun getAlreadyOpenedAnswerIds(
+        database: ContentFilterDatabase,
+        answerIds: List<Long>,
+        extraReadContentKeys: Set<String> = emptySet(),
+    ): Set<Long> = getAlreadyOpenedAnswerIds(
+        contentOpenEventDao = database.contentOpenEventDao(),
+        cloudReadHistoryDao = database.cloudReadHistoryDao(),
+        answerIds = answerIds,
+        extraReadContentKeys = extraReadContentKeys,
+    )
+
+    /**
+     * 全局已读回答从新的上一/下一候选队列中排除；本次会话回看由 AnswerNavigator.answerHistory 提供。
+     */
     fun partitionQuestionAnswerCandidates(
         candidates: List<Article>,
         openedAnswerIds: Set<Long>,
@@ -162,17 +218,16 @@ object ContentOpenEventSupport {
         val nextCandidates = mutableListOf<Article>()
 
         candidates.forEach { article ->
-            if (article.type != ArticleType.Answer || article.id == currentArticleId || article.id in historyIds) {
+            if (article.type != ArticleType.Answer ||
+                article.id == currentArticleId ||
+                article.id in historyIds ||
+                article.id in previousIds ||
+                article.id in nextIds ||
+                article.id in openedAnswerIds
+            ) {
                 return@forEach
             }
-            if (article.id in previousIds || article.id in nextIds) {
-                return@forEach
-            }
-            if (article.id in openedAnswerIds) {
-                previousCandidates.add(article)
-            } else {
-                nextCandidates.add(article)
-            }
+            nextCandidates.add(article)
         }
 
         return QuestionAnswerCandidatePartition(

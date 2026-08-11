@@ -304,12 +304,8 @@ class DesktopPaginationEnvironment(
 
     override suspend fun applyHomeFeedFilters(items: List<FeedDisplayItem>): HomeFeedFilterResult {
         val settings = settingsStore.toFeedFilterSettings()
-        val readContentKeys = if (settings.reverseBlock || !settings.enableContentFilter) {
-            emptySet()
-        } else {
-            scheduleCloudReadHistorySync()
-            homeFeedReadContentKeys()
-        }
+        scheduleCloudReadHistorySync()
+        val readContentKeys = homeFeedReadContentKeys()
         val foregroundItems = ForegroundReadFilterPipeline(
             settings = settings,
             contentFilterManager = ContentFilterManager(contentFilterDb.contentFilterDao()),
