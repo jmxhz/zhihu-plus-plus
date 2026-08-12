@@ -3,38 +3,33 @@ package com.hrm.markdown.renderer
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.text.selection.DisableSelection
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
-import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.hrm.markdown.parser.ast.AbbreviationDefinition
 import com.hrm.markdown.parser.ast.BlankLine
-import com.hrm.markdown.parser.ast.CitationReference
 import com.hrm.markdown.parser.ast.ContainerNode
-import com.hrm.markdown.parser.ast.Emoji
 import com.hrm.markdown.parser.ast.FencedCodeBlock
 import com.hrm.markdown.parser.ast.Figure
 import com.hrm.markdown.parser.ast.FootnoteDefinition
@@ -42,12 +37,10 @@ import com.hrm.markdown.parser.ast.FootnoteReference
 import com.hrm.markdown.parser.ast.FrontMatter
 import com.hrm.markdown.parser.ast.HardLineBreak
 import com.hrm.markdown.parser.ast.Heading
-import com.hrm.markdown.parser.ast.HtmlEntity
 import com.hrm.markdown.parser.ast.Image
 import com.hrm.markdown.parser.ast.InlineCode
 import com.hrm.markdown.parser.ast.InlineMath
 import com.hrm.markdown.parser.ast.LinkReferenceDefinition
-import com.hrm.markdown.parser.ast.LeafNode
 import com.hrm.markdown.parser.ast.MathBlock
 import com.hrm.markdown.parser.ast.Node
 import com.hrm.markdown.parser.ast.Paragraph
@@ -57,6 +50,9 @@ import com.hrm.markdown.parser.ast.Text
 import com.hrm.markdown.parser.ast.ThematicBreak
 import com.hrm.markdown.renderer.block.BlockRenderer
 import com.hrm.markdown.renderer.block.blockRenderRevision
+import com.hrm.markdown.renderer.selection.PersistentSelectionContainer
+import com.hrm.markdown.renderer.selection.PersistentSelectionGroup
+import com.hrm.markdown.renderer.selection.PersistentSelectionScope
 import kotlin.math.ceil
 
 @Composable
@@ -67,7 +63,6 @@ internal fun MarkdownDocumentLayout(
     enableScroll: Boolean,
     scrollState: ScrollState,
     lazyListState: LazyListState,
-    deferOffscreenBlocks: Boolean,
     header: (@Composable () -> Unit)? = null,
     footer: (@Composable () -> Unit)? = null,
 ) {
@@ -85,11 +80,7 @@ internal fun MarkdownDocumentLayout(
         MarkdownRenderMode.SelectableColumn,
         MarkdownRenderMode.StaticColumn -> {
             val markdownBody: @Composable () -> Unit = {
-                MarkdownBlockColumn(
-                    blocks = renderState.renderBlocks,
-                    deferOffscreenBlocks = deferOffscreenBlocks,
-                    preserveSelectionAcrossDeferredBlocks = renderMode == MarkdownRenderMode.SelectableColumn,
-                )
+                MarkdownBlockColumn(blocks = renderState.renderBlocks)
             }
             val theme = LocalMarkdownTheme.current
             Column(
@@ -100,7 +91,7 @@ internal fun MarkdownDocumentLayout(
             ) {
                 header?.invoke()
                 if (renderMode == MarkdownRenderMode.SelectableColumn) {
-                    SelectionContainer {
+                    PersistentSelectionContainer(documentKey = LocalRendererDocument.current) {
                         markdownBody()
                     }
                 } else {
@@ -121,8 +112,6 @@ internal fun MarkdownBlockChildren(
     MarkdownBlockColumn(
         blocks = blockNodes,
         modifier = modifier,
-        deferOffscreenBlocks = false,
-        preserveSelectionAcrossDeferredBlocks = false,
     )
 }
 
@@ -130,133 +119,153 @@ internal fun MarkdownBlockChildren(
 internal fun MarkdownBlockColumn(
     blocks: List<Node>,
     modifier: Modifier = Modifier,
-    deferOffscreenBlocks: Boolean,
-    preserveSelectionAcrossDeferredBlocks: Boolean,
 ) {
-    val theme = LocalMarkdownTheme.current
-    Column(
+    DeferredMarkdownColumn(
+        blocks = blocks,
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(theme.blockSpacing),
-    ) {
-        MarkdownBlockItems(blocks, deferOffscreenBlocks, preserveSelectionAcrossDeferredBlocks)
+    ) { _, node ->
+        BlockRenderer(
+            node = node,
+            renderRevision = blockRenderRevision(node),
+        )
     }
 }
 
 @Composable
-private fun MarkdownBlockItems(
-    blocks: List<Node>,
-    deferOffscreenBlocks: Boolean,
-    preserveSelectionAcrossDeferredBlocks: Boolean,
+internal fun <T : Node> DeferredMarkdownColumn(
+    blocks: List<T>,
+    modifier: Modifier = Modifier,
+    blockSpacing: Dp? = null,
+    prefetchViewports: Float? = null,
+    estimateHeightDp: (T, Float, MarkdownTheme) -> Float = ::estimateMarkdownBlockHeightDp,
+    blockContent: @Composable (Int, T) -> Unit,
 ) {
-    for (node in blocks) {
-        key(node::class, node.stableKey) {
-            if (deferOffscreenBlocks) {
-                DeferredMarkdownBlock(node, preserveSelectionAcrossDeferredBlocks)
-            } else {
-                BlockRenderer(
-                    node = node,
-                    renderRevision = blockRenderRevision(node),
-                )
-            }
-        }
+    val groupKey = blocks.firstOrNull()?.parent ?: blocks
+    PersistentSelectionGroup(groupKey) { groupOrder ->
+        DeferredMarkdownBlockLayout(
+            blocks = blocks,
+            groupOrder = groupOrder,
+            modifier = modifier,
+            blockSpacing = blockSpacing,
+            prefetchViewports = prefetchViewports,
+            estimateHeightDp = estimateHeightDp,
+            blockContent = blockContent,
+        )
     }
 }
 
 @Composable
-private fun DeferredMarkdownBlock(
-    node: Node,
-    preserveSelectionAcrossDeferredBlocks: Boolean,
+private fun <T : Node> DeferredMarkdownBlockLayout(
+    blocks: List<T>,
+    groupOrder: List<Int>,
+    modifier: Modifier,
+    blockSpacing: Dp?,
+    prefetchViewports: Float?,
+    estimateHeightDp: (T, Float, MarkdownTheme) -> Float,
+    blockContent: @Composable (Int, T) -> Unit,
 ) {
     val theme = LocalMarkdownTheme.current
     val footnoteNavigationState = LocalFootnoteNavigationState.current
     val density = LocalDensity.current
     val viewportHeightPx = LocalWindowInfo.current.containerSize.height.toFloat()
-    var materialized by remember(node) { mutableStateOf(false) }
-    // 父 LazyColumn 回收整个 Markdown 条目后，若丢失实测高度，重新进入视口时估算高度与真实高度会
-    // 反复改变父列表布局，表现为长问题详情空白和按钮抖动（#615）。这里只保存高度，仍保留离屏延迟渲染。
-    var measuredHeightDp by rememberSaveable(node.stableKey) { mutableStateOf<Float?>(null) }
-    val requestedByNavigation =
-        footnoteNavigationState?.let { navigationState ->
-            (node is FootnoteDefinition && navigationState.isDefinitionRequested(node.label)) ||
-                node.hasRequestedFootnoteReference(navigationState)
-        } == true
-    val renderBlock = materialized || requestedByNavigation
-    val selectionProjectionText = remember(node, preserveSelectionAcrossDeferredBlocks) {
-        if (preserveSelectionAcrossDeferredBlocks) node.selectionProjectionText() else ""
+    val deferredBlockStates = rememberSaveableStateHolder()
+    val measuredHeightsPx = remember { mutableStateMapOf<Any, Int>() }
+    val blockKeys = remember(blocks) { blocks.map { it::class to it.stableKey } }
+    val estimatedHeightsByWidth = remember(blocks, theme, density.density, density.fontScale) {
+        mutableMapOf<Int, List<Int>>()
     }
-    BoxWithConstraints(
-        modifier = Modifier
+    val effectivePrefetchViewports = prefetchViewports ?: remember(blocks) {
+        if (blocks.any(Node::containsBlockMath)) 1.5f else 0.5f
+    }
+    var topInWindowPx by remember { mutableFloatStateOf(0f) }
+
+    // A Column containing one deferred Box per top-level block still composes and measures hundreds of
+    // coordinate/constraint nodes before drawing the first frame. The issue #495 fixture stayed near
+    // 400 ms even though only a few BlockRenderers were materialized. Keep the complete AST and total
+    // document geometry, but only subcompose blocks intersecting the viewport plus its prefetch margin.
+    // Restoring eager rich-content layout is not an alternative: the same fixture took about 3.4 s and
+    // repeated layouts exhausted the roughly 200 MB instrument-test heap.
+    SubcomposeLayout(
+        modifier = modifier
             .fillMaxWidth()
             .onGloballyPositioned { coordinates ->
-                if (viewportHeightPx > 0f) {
-                    val top = coordinates.positionInWindow().y
-                    val bottom = top + coordinates.size.height
-                    val prefetchPx = viewportHeightPx * 0.5f
-                    val nearViewport = bottom >= -prefetchPx && top <= viewportHeightPx + prefetchPx
-                    if (renderBlock && coordinates.size.height > 0) {
-                        measuredHeightDp = with(density) { coordinates.size.height.toDp().value }
-                    }
-                    if (materialized != nearViewport) {
-                        materialized = nearViewport
-                    }
-                }
+                val newTop = coordinates.positionInWindow().y
+                if (topInWindowPx != newTop) topInWindowPx = newTop
             },
-    ) {
-        if (selectionProjectionText.isNotEmpty()) {
-            val selectionLineHeightSp = theme.bodyStyle.lineHeight.value
-                .takeIf { it.isFinite() && it > 0f }
-                ?: theme.bodyStyle.fontSize.value.coerceAtLeast(1f) * 1.5f
-            val selectionLineHeightDp = selectionLineHeightSp * density.fontScale
-            val selectionLayoutHeightDp = measuredHeightDp
-                ?: estimateMarkdownBlockHeightDp(node, maxWidth.value, theme)
-            val selectionLayoutLineCapacity = ceil(selectionLayoutHeightDp / selectionLineHeightDp)
-                .toInt()
-                .coerceAtLeast(1)
-            // AndroidX 没有公开的离屏 Selectable 注册 API，且 selectable 在注销后会丢失已有选择。
-            // 因此同一个完整多行文字层始终留在视觉内容下方，它是长按、拖动、全选和复制共享的
-            // 唯一选择源。上层富内容不再注册第二份文字，只负责可见绘制和链接等交互，避免复制重复。
-            // maxLines 不能低于可见块的行容量：文字虽仍能全部复制，选中路径却只包含已布局的行；
-            // 固定成 1 就会导致多行段落只有第一行显示选中背景。按块高计算容量可以保留完整高亮，
-            // 同时避免对超出该块可见高度的展平文字做无意义布局。
-            // 长文基准中，改为在全选时完整物化富文本首次耗时约 3.4 秒；反复重建约 34 秒后，
-            // 包含大量公式的 instrument 测试在约 200 MB 堆上 OOM，因此不能用全量物化替代此投影。
-            // https://developer.android.com/reference/kotlin/androidx/compose/foundation/text/selection/package-summary#SelectionContainer(androidx.compose.ui.Modifier,kotlin.Function0)
-            BasicText(
-                text = selectionProjectionText,
-                modifier = Modifier
-                    .matchParentSize()
-                    .clearAndSetSemantics { },
-                style = theme.bodyStyle.copy(color = Color.Transparent),
-                maxLines = selectionLayoutLineCapacity,
-            )
-        }
-        if (renderBlock) {
-            DisableSelection {
-                BlockRenderer(
-                    node = node,
-                    renderRevision = blockRenderRevision(node),
-                )
+    ) { constraints ->
+        val spacingPx = with(density) { (blockSpacing ?: theme.blockSpacing).roundToPx() }
+        val estimatedHeightsPx = estimatedHeightsByWidth.getOrPut(constraints.maxWidth) {
+            val widthDp = with(density) { constraints.maxWidth.toDp().value }
+            blocks.map { node ->
+                with(density) { estimateHeightDp(node, widthDp, theme).dp.roundToPx() }
             }
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(
-                        (measuredHeightDp ?: estimateMarkdownBlockHeightDp(node, maxWidth.value, theme)).dp,
-                    ),
-            )
+        }
+        val blockHeights = blocks.indices.map { index ->
+            measuredHeightsPx[blockKeys[index]]
+                ?: estimatedHeightsPx[index]
+        }
+        val blockTops = IntArray(blocks.size)
+        var totalHeight = 0
+        blockHeights.forEachIndexed { index, height ->
+            blockTops[index] = totalHeight
+            totalHeight += height
+            if (index != blocks.lastIndex) totalHeight += spacingPx
+        }
+        // LaTeX parsing and layout are prepared off the UI thread. Formula documents keep one and
+        // a half viewports ahead: one viewport raised the same stress corpus' forward-scroll peak
+        // from about 95 ms to 151 ms. Plain content uses half a viewport so first layout does not
+        // eagerly compose two and a half screens that provide no asynchronous preparation benefit.
+        val prefetchPx = viewportHeightPx * effectivePrefetchViewports
+        val visibleTop = -topInWindowPx - prefetchPx
+        val visibleBottom = viewportHeightPx - topInWindowPx + prefetchPx
+        val childConstraints = constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity)
+        val placeables = buildList {
+            blocks.forEachIndexed { index, node ->
+                val top = blockTops[index]
+                val bottom = top + blockHeights[index]
+                val requestedByNavigation = footnoteNavigationState?.let { navigationState ->
+                    (node is FootnoteDefinition && navigationState.isDefinitionRequested(node.label)) ||
+                        node.hasRequestedFootnoteReference(navigationState)
+                } == true
+                if (bottom >= visibleTop && top <= visibleBottom || requestedByNavigation) {
+                    val blockKey = blockKeys[index]
+                    val placeable = subcompose(blockKey) {
+                        deferredBlockStates.SaveableStateProvider(node.stableKey) {
+                            PersistentSelectionScope(
+                                scopeKey = blockKey,
+                                documentOrder = groupOrder + index,
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .onSizeChanged { size ->
+                                            if (size.height > 0 && measuredHeightsPx[blockKey] != size.height) {
+                                                measuredHeightsPx[blockKey] = size.height
+                                            }
+                                        },
+                                ) {
+                                    blockContent(index, node)
+                                }
+                            }
+                        }
+                    }.single().measure(childConstraints)
+                    add(top to placeable)
+                }
+            }
+        }
+        layout(
+            width = constraints.maxWidth.coerceIn(constraints.minWidth, constraints.maxWidth),
+            height = totalHeight.coerceIn(constraints.minHeight, constraints.maxHeight),
+        ) {
+            placeables.forEach { (top, placeable) -> placeable.placeRelative(0, top) }
         }
     }
 }
 
-private fun Node.selectionProjectionText(): String = when (this) {
-    is FrontMatter, is LinkReferenceDefinition, is AbbreviationDefinition, is BlankLine -> ""
-    is FootnoteReference -> "[$index]"
-    is CitationReference -> "[$key]"
-    is HtmlEntity -> resolved.ifEmpty { literal }
-    is Emoji -> unicode ?: literal.ifEmpty { ":$shortcode:" }
-    is ContainerNode -> children.joinToString("") { it.selectionProjectionText() }
-    is LeafNode -> literal
+private fun Node.containsBlockMath(): Boolean = when (this) {
+    is MathBlock -> true
+    is ContainerNode -> children.any(Node::containsBlockMath)
+    else -> false
 }
 
 private fun Node.hasRequestedFootnoteReference(navigationState: FootnoteNavigationState): Boolean = when (this) {
@@ -276,7 +285,7 @@ internal fun estimateMarkdownBlockHeightDp(
     return when (node) {
         is BlankLine, is FrontMatter, is LinkReferenceDefinition, is AbbreviationDefinition -> 0f
         is Paragraph -> {
-            val widthUnits = node.estimatedInlineWidthUnits(fontSize, safeWidth)
+            val widthUnits = node.estimatedInlineWidthDp(fontSize, safeWidth)
             val forcedLines = node.countLineBreaks()
             (ceil(widthUnits / safeWidth).toInt().coerceAtLeast(1) + forcedLines) * lineHeight
         }
@@ -309,15 +318,24 @@ internal fun estimateMarkdownBlockHeightDp(
     }.coerceAtLeast(0f)
 }
 
-private fun Node.estimatedInlineWidthUnits(
+internal fun Node.estimatedInlineWidthDp(
     fontSize: Float,
     availableWidth: Float,
 ): Float = when (this) {
-    is Text -> literal.sumOf { character -> if (character.code > 0x7f) 1.0 else 0.55 }.toFloat() * fontSize
+    is Text ->
+        literal.sumOf { character ->
+            when {
+                character.code > 0x7f -> 1.0
+                character.isWhitespace() -> 0.35
+                character in "ilI.,'`:;!|" -> 0.3
+                character in "MW@#%&" -> 0.9
+                else -> 0.6
+            }
+        }.toFloat() * fontSize
     is InlineMath -> (literal.length * 0.7f).coerceIn(1.5f, 20f) * fontSize * 1.125f
     is InlineCode -> literal.length.coerceAtLeast(1) * fontSize * 0.65f
     is Image, is HardLineBreak, is SoftLineBreak -> availableWidth
-    is ContainerNode -> children.sumOf { it.estimatedInlineWidthUnits(fontSize, availableWidth).toDouble() }.toFloat()
+    is ContainerNode -> children.sumOf { it.estimatedInlineWidthDp(fontSize, availableWidth).toDouble() }.toFloat()
     else -> 0f
 }
 

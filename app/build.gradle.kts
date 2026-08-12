@@ -53,6 +53,7 @@ android {
         }
         create("lite") {
             dimension = "version"
+            isDefault = true
             buildConfigField("boolean", "IS_LITE", "true")
             applicationIdSuffix = ".lite"
 //            versionNameSuffix = "-lite"
@@ -200,7 +201,7 @@ dependencies {
 
     implementation(project(":markdown-parser"))
     implementation(project(":markdown-renderer"))
-    implementation("io.github.zly2006:latex-renderer-android:0.0.1-alpha4")
+    implementation("io.github.zly2006:latex-renderer-android:0.0.1-alpha5")
 
     implementation("io.coil-kt.coil3:coil-compose:$coil")
     implementation("io.coil-kt.coil3:coil-network-ktor3-android:$coil")

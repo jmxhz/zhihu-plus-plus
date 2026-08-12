@@ -93,6 +93,8 @@ abstract class PaginationViewModel<T : Any>(
     private var currentJob: Job? = null
     protected open val shouldLogDecodeFailures: Boolean = true
 
+    protected open fun resolvePageUrl(): String = lastPaging?.next ?: initialUrl
+
     /**
      * Generally used fields to include in the API request.
      * This can be overridden in subclasses to include more specific fields.
@@ -119,7 +121,7 @@ abstract class PaginationViewModel<T : Any>(
     protected open suspend fun fetchFeeds(environment: PaginationEnvironment) {
         lastFetchFailed = false
         try {
-            val url = lastPaging?.next ?: initialUrl
+            val url = resolvePageUrl()
 
             @Suppress("HttpUrlsUsage")
             val json = environment.fetchJson(url.replace("http://", "https://"), include)
