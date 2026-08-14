@@ -244,6 +244,23 @@ class ZhihuMainNavigationInstrumentedTest {
     }
 
     @Test
+    fun detailBackNavigationKeepsOriginMainTab() {
+        composeRule.launchZhihuMain(startDestination = Follow.name)
+        composeRule.waitUntilTabSelected("nav_tab_follow")
+
+        composeRule.runOnIdle {
+            composeRule.activity.navigate(
+                Article(type = ArticleType.Answer, id = 318L),
+            )
+        }
+        composeRule.pressSystemBack()
+
+        composeRule.waitUntilTabSelected("nav_tab_follow")
+        composeRule.onNodeWithTag("nav_tab_follow").assertIsSelected()
+        composeRule.onNodeWithTag("nav_tab_home").assertIsNotSelected()
+    }
+
+    @Test
     fun collectionsTabKeepsLegacyListByDefault() {
         composeRule.launchZhihuMain(
             startDestination = MyCollections.name,

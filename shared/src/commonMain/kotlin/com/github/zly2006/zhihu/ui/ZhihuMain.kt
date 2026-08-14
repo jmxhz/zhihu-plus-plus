@@ -119,6 +119,7 @@ import com.github.zly2006.zhihu.navigation.SentenceSimilarityTest
 import com.github.zly2006.zhihu.navigation.TopLevelDestination
 import com.github.zly2006.zhihu.navigation.WriteAnswer
 import com.github.zly2006.zhihu.navigation.WritePin
+import com.github.zly2006.zhihu.platform.PlatformBackHandler
 import com.github.zly2006.zhihu.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.reading.rememberReadingPlayerController
 import com.github.zly2006.zhihu.reading.saveReadingPlaybackSpeed
@@ -134,13 +135,12 @@ import com.github.zly2006.zhihu.ui.subscreens.DeveloperSettingsScreen
 import com.github.zly2006.zhihu.ui.subscreens.IdentityManagementScreen
 import com.github.zly2006.zhihu.ui.subscreens.OpenSourceLicensesScreen
 import com.github.zly2006.zhihu.ui.subscreens.ReadingSettingsScreen
+import com.github.zly2006.zhihu.ui.subscreens.SettingsSearchScreen
 import com.github.zly2006.zhihu.ui.subscreens.SystemAndUpdateSettingsScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.reflect.KClass
 import kotlin.reflect.typeOf
-
-const val SURVEY_URL = "https://v.wjx.cn/vm/Ppfw2R4.aspx#"
 
 private sealed class MainTabPage(
     val bottomDestination: TopLevelDestination,
@@ -345,6 +345,12 @@ fun ZhihuMain(
         mainTabPages.getOrNull(mainPagerState.currentPage)?.bottomDestination?.let { destination ->
             currentMainTabDestination = destination
             setCurrentMainTabOpenFrom(destination.openFrom)
+        }
+    }
+
+    PlatformBackHandler(showMainNavigation && mainPagerState.currentPage != 0) {
+        coroutineScope.launch {
+            mainPagerState.animateScrollToPage(0)
         }
     }
 
@@ -636,8 +642,10 @@ fun ZhihuMain(
                     composable<Notification.Message> { navEntry ->
                         PrivateMessageScreen(navEntry.toRoute())
                     }
-                    composable<Notification.NotificationSettings> {
-                        NotificationSettingsScreen()
+                    composable<Notification.NotificationSettings> { navEntry ->
+                        NotificationSettingsScreen(
+                            setting = navEntry.toRoute<Notification.NotificationSettings>().setting,
+                        )
                     }
                     composable<SentenceSimilarityTest> {
                         sentenceSimilarityContent()
@@ -656,11 +664,16 @@ fun ZhihuMain(
                     composable<Account.IdentityManagement> {
                         IdentityManagementScreen()
                     }
-                    composable<Account.SystemAndUpdateSettings> {
-                        SystemAndUpdateSettingsScreen()
+                    composable<Account.SystemAndUpdateSettings> { navEntry ->
+                        SystemAndUpdateSettingsScreen(
+                            setting = navEntry.toRoute<Account.SystemAndUpdateSettings>().setting,
+                        )
                     }
                     composable<Account.ReadingSettings> {
                         ReadingSettingsScreen()
+                    }
+                    composable<Account.SettingsSearch> {
+                        SettingsSearchScreen()
                     }
                     composable<Account.OpenSourceLicenses> {
                         OpenSourceLicensesScreen()
