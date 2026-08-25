@@ -434,7 +434,8 @@ class PersonViewModel(
     suspend fun load(environment: ProfileLoadEnvironment) {
         environment.addReadHistory(person.id, "profile")
 
-        val jojo = environment.fetchJson(peopleProfileUrl(person), PEOPLE_PROFILE_INCLUDE_PATH)
+        val profileUrl = "https://api.zhihu.com/people/${person.urlToken.takeIf(String::isNotBlank) ?: person.id}"
+        val jojo = environment.fetchJson(profileUrl, PEOPLE_PROFILE_INCLUDE_PATH)
             ?: error("用户资料为空")
 
         val loadedPerson = ZhihuJson.decodeJson<DataHolder.People>(jojo)
@@ -468,8 +469,10 @@ class PersonViewModel(
         }
 
         this.githubSocial = try {
+            val detailUrl =
+                "https://api.zhihu.com/people/${person.urlToken.takeIf(String::isNotBlank) ?: person.id}/profile/detail"
             environment
-                .fetchJson("${peopleProfileUrl(person)}/profile/detail", "")
+                .fetchJson(detailUrl, "")
                 ?.let { ZhihuJson.decodeJson<DataHolder.People>(it).githubSocialUiState() }
         } catch (error: CancellationException) {
             throw error
@@ -589,11 +592,6 @@ private fun peopleScreenInitialPage(person: Person): Int {
     return if (jumpToIndex >= 0) jumpToIndex else 0
 }
 
-internal fun peopleProfileUrl(person: Person): String {
-    val identifier = person.urlToken.takeIf { it.isNotBlank() } ?: person.id
-    return "https://api.zhihu.com/people/$identifier"
-}
-
 data class GithubSocialUiState(
     val title: String,
     val starCount: String,
@@ -681,6 +679,8 @@ fun PeopleScreen(
     LaunchedEffect(viewModel) {
         try {
             viewModel.load(paginationEnvironment)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             userMessages.showShortMessage("加载用户信息失败: ${e.message}")
         }
@@ -696,6 +696,8 @@ fun PeopleScreen(
                     feedModel.loadMore(paginationEnvironment)
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             userMessages.showShortMessage("加载页面内容失败: ${e.message}")
         }

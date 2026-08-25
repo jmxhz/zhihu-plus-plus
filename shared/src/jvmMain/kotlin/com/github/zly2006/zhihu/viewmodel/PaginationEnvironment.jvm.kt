@@ -107,7 +107,7 @@ internal fun prepareDesktopPendingContentOpen(
         ?: ContentOpenEventSupport.inferOpenFrom(source, target)
 }
 
-internal fun consumeDesktopPendingContentOpenFrom(destination: NavDestination): String {
+private fun consumeDesktopPendingContentOpenFrom(destination: NavDestination): String {
     val identity = ContentOpenEventSupport.toTrackedContentIdentity(destination) ?: return ContentOpenFrom.UNKNOWN
     if (identity != desktopPendingContentOpenIdentity) {
         return ContentOpenFrom.UNKNOWN
@@ -196,7 +196,7 @@ class DesktopPaginationEnvironment(
     }
 
     override fun feedDisplaySettings(): FeedDisplaySettings = FeedDisplaySettings(
-        enableQualityFilter = false,
+        qualityFilterMode = QualityFilterMode.OFF,
         reverseBlock = settingsStore.toFeedFilterSettings().reverseBlock,
     )
 

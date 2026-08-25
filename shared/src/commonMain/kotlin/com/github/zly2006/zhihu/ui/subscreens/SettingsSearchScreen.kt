@@ -1,5 +1,5 @@
 /*
- * Zhihu++ - Free & Ad-Free Zhihu client for Android.
+ * Zhihu++ - Free & Ad-Free Zhihu client for all platforms.
  * Copyright (C) 2024-2026, zly2006 <i@zly2006.me>
  *
  * This program is free software: you can redistribute it and/or modify
@@ -57,8 +57,10 @@ import com.github.zly2006.zhihu.notification.NotificationType
 import com.github.zly2006.zhihu.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.ui.ANSWER_DOUBLE_TAP_ACTION_PREFERENCE_KEY
 import com.github.zly2006.zhihu.ui.ARTICLE_USE_WEBVIEW_PREFERENCE_KEY
+import com.github.zly2006.zhihu.ui.components.DISABLE_BOTTOM_SHEET_ROUNDED_CORNERS_PREFERENCE_KEY
 import com.github.zly2006.zhihu.ui.components.SettingItem
 import com.github.zly2006.zhihu.ui.components.SettingItemGroup
+import com.github.zly2006.zhihu.viewmodel.QUALITY_FILTER_MODE_PREFERENCE_KEY
 
 const val SETTINGS_SEARCH_INPUT_TAG = "settingsSearch.input"
 const val SETTINGS_SEARCH_RESULTS_TAG = "settingsSearch.results"
@@ -156,6 +158,7 @@ private fun notificationEntry(
 private val settingsSearchEntries = buildList {
     add(appearanceEntry("appearance.nightMode", "主题模式", "切换浅色、深色或跟随系统。", "nightMode", listOf("夜间模式", "深色模式", "暗色模式", "浅色模式", "跟随系统")))
     add(appearanceEntry("appearance.dynamicColor", "使用 Material You 动态取色", "Android 12+ 根据系统壁纸取色。", "dynamicColor", listOf("动态颜色", "壁纸取色", "主题色")))
+    add(appearanceEntry("appearance.bottomSheetCorners", "禁用 popup 圆角", "评论等 popup 顶部改为直角。", DISABLE_BOTTOM_SHEET_ROUNDED_CORNERS_PREFERENCE_KEY, listOf("评论圆角", "popup", "直角")))
     add(appearanceEntry("appearance.fontScale", "字号与行高", "调整正文阅读字号和行距。", "fontScale", listOf("字体大小", "内容字体", "正文字号", "行距")))
     add(appearanceEntry("appearance.showFeedThumbnail", "显示 Feed 卡片缩略图", "控制信息流卡片图片显示。", "showFeedThumbnail", listOf("图片", "封面")))
     add(appearanceEntry("appearance.showRefreshFab", "显示刷新 FAB 按钮", "控制首页和列表的浮动刷新按钮。", "showRefreshFab", listOf("刷新按钮", "浮动按钮")))
@@ -201,7 +204,7 @@ private val settingsSearchEntries = buildList {
 
     add(recommendEntry("recommend.recommendationMode", "推荐算法", "选择 Web、Android、本地或混合推荐。", "recommendationMode", listOf("推荐来源", "Web 推荐", "Android 推荐", "本地推荐", "混合推荐")))
     add(recommendEntry("recommend.loginForRecommendation", "推荐内容时登录", "获取推荐内容时是否带登录凭证。", "loginForRecommendation"))
-    add(recommendEntry("recommend.enableQualityFilter", "启用质量过滤规则", "按赞同数、关注数等指标过滤内容。", "enableQualityFilter", listOf("低质量")))
+    add(recommendEntry("recommend.qualityFilterMode", "质量屏蔽", "选择不屏蔽、显示屏蔽规则或直接隐藏低质量内容。", QUALITY_FILTER_MODE_PREFERENCE_KEY, listOf("低质量", "屏蔽规则", "隐藏")))
     add(recommendEntry("recommend.enableContentFilter", "启用智能内容过滤", "过滤重复出现但未点击内容。", "enableContentFilter"))
     add(recommendEntry("recommend.filterFollowedUserContent", "过滤已关注用户内容", "控制是否过滤已关注用户的内容。", "filterFollowedUserContent"))
     add(recommendEntry("recommend.enableKeywordBlocking", "启用关键词屏蔽", "按关键词过滤内容。", "enableKeywordBlocking", listOf("关键词", "屏蔽词")))

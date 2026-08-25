@@ -30,6 +30,7 @@ import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.util.Log
 import com.github.zly2006.zhihu.viewmodel.ContentInteractionEnvironment
 import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
+import com.github.zly2006.zhihu.viewmodel.QualityFilterMode
 import com.github.zly2006.zhihu.viewmodel.filter.ContentDetailProvider
 import com.github.zly2006.zhihu.viewmodel.filter.extractTopicIds
 import com.github.zly2006.zhihu.viewmodel.postSigned
@@ -193,9 +194,14 @@ class HomeFeedViewModel :
 
         filterJob = viewModelScope.launch {
             val existingKeys = displayItems.mapTo(hashSetOf()) { it.homeFeedContentKey }
-            val newItems = data
+            val loadedItems = data
                 .flattenFeeds()
                 .map { feed -> createDisplayItem(environment, feed) }
+            val newItems = if (environment.feedDisplaySettings().qualityFilterMode == QualityFilterMode.HIDE) {
+                loadedItems.filterNot { it.isQualityFiltered }
+            } else {
+                loadedItems
+            }
 
             val filterResult = environment.applyHomeFeedFilters(newItems)
             // 同一问题已有可见回答时丢弃问题卡，避免“问题卡 + 回答卡”同标题重复展示。
@@ -220,6 +226,7 @@ class HomeFeedViewModel :
                     ),
                 )
                 latestLoadedDisplayItems.value = filteredItems
+                completedPageCount++
             }
             lastPageProducedVisibleItems = filteredItems.any {
                 it.homeFeedContentKey !in existingKeys
