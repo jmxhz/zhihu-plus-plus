@@ -302,18 +302,22 @@ class DesktopPaginationEnvironment(
         recordContentOpenEvent(destination, questionId)
     }
 
-    override suspend fun applyHomeFeedFilters(items: List<FeedDisplayItem>): HomeFeedFilterResult {
+    override suspend fun applyForegroundHomeFeedFilter(items: List<FeedDisplayItem>): List<FeedDisplayItem> {
         val settings = settingsStore.toFeedFilterSettings()
         scheduleCloudReadHistorySync()
         val readContentKeys = homeFeedReadContentKeys()
-        val foregroundItems = ForegroundReadFilterPipeline(
+        return ForegroundReadFilterPipeline(
             settings = settings,
             contentFilterManager = ContentFilterManager(contentFilterDb.contentFilterDao()),
             blockedFeedRecordDao = contentFilterDb.blockedFeedRecordDao(),
             contentOpenEventDao = contentFilterDb.contentOpenEventDao(),
             cloudReadHistoryDao = contentFilterDb.cloudReadHistoryDao(),
         ).filter(items, readContentKeys)
-        val filteredItems = FeedDisplayFilterPipeline(
+    }
+
+    override suspend fun applyBackgroundHomeFeedFilter(items: List<FeedDisplayItem>): List<FeedDisplayItem> {
+        val settings = settingsStore.toFeedFilterSettings()
+        return FeedDisplayFilterPipeline(
             settings = settings,
             contentDetailProvider = ContentDetailProvider(::getOrFetchContentDetail),
             contentFilterPipeline = FeedContentFilterPipeline(
@@ -329,12 +333,7 @@ class DesktopPaginationEnvironment(
                 ),
             ),
             blockedFeedRecordDao = contentFilterDb.blockedFeedRecordDao(),
-        ).filter(foregroundItems)
-        return HomeFeedFilterResult(
-            foregroundItems = foregroundItems,
-            filteredItems = filteredItems,
-            reverseBlock = settings.reverseBlock,
-        )
+        ).filter(items)
     }
 
     override suspend fun recordContentInteraction(feed: Feed) {

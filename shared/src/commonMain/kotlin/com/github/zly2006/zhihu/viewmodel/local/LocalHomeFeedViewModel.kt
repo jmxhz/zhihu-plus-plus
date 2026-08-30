@@ -72,15 +72,17 @@ class LocalHomeFeedViewModel :
                         displayItems.none { existing -> existing.homeFeedContentKey == candidate.homeFeedContentKey }
                     }
                 if (candidates.isEmpty()) continue
-                val filterResult = environment.applyHomeFeedFilters(candidates)
-                val visibleItems = if (filterResult.reverseBlock) {
-                    filterResult.filteredItems
+                val reverseBlock = environment.feedDisplaySettings().reverseBlock
+                val foregroundItems = environment.applyForegroundHomeFeedFilter(candidates)
+                val filteredItems = environment.applyBackgroundHomeFeedFilter(foregroundItems)
+                val visibleItems = if (reverseBlock) {
+                    filteredItems
                 } else {
-                    filterResult.filteredItems.filterNot { it.isFiltered }
+                    filteredItems.filterNot { it.isFiltered }
                 }
                 if (visibleItems.isNotEmpty()) {
                     addDisplayItems(visibleItems)
-                    latestLoadedDisplayItems.value = filterResult.filteredItems
+                    latestLoadedDisplayItems.value = filteredItems
                     break
                 }
             }

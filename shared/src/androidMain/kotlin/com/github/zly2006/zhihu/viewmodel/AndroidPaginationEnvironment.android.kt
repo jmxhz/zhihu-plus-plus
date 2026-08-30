@@ -410,20 +410,24 @@ open class SharedAndroidPaginationEnvironment(
         recordContentOpenEvent(destination, questionId)
     }
 
-    override suspend fun applyHomeFeedFilters(items: List<FeedDisplayItem>): HomeFeedFilterResult {
-        val settings = feedDisplaySettings()
+    override suspend fun applyForegroundHomeFeedFilter(items: List<FeedDisplayItem>): List<FeedDisplayItem> {
         val filterSettings = context.contentFilterSettings()
         val filterDatabase = getContentFilterDatabase(context)
         scheduleCloudReadHistorySync()
         val readContentKeys = homeFeedReadContentKeys()
-        val foregroundItems = ForegroundReadFilterPipeline(
+        return ForegroundReadFilterPipeline(
             settings = filterSettings,
             contentFilterManager = ContentFilterManager(filterDatabase.contentFilterDao()),
             blockedFeedRecordDao = filterDatabase.blockedFeedRecordDao(),
             contentOpenEventDao = filterDatabase.contentOpenEventDao(),
             cloudReadHistoryDao = filterDatabase.cloudReadHistoryDao(),
         ).filter(items, readContentKeys)
-        val filteredItems = FeedDisplayFilterPipeline(
+    }
+
+    override suspend fun applyBackgroundHomeFeedFilter(items: List<FeedDisplayItem>): List<FeedDisplayItem> {
+        val filterSettings = context.contentFilterSettings()
+        val filterDatabase = getContentFilterDatabase(context)
+        return FeedDisplayFilterPipeline(
             settings = filterSettings,
             contentDetailProvider = this::getOrFetchContentDetail,
             contentFilterPipeline = FeedContentFilterPipeline(
@@ -452,12 +456,7 @@ open class SharedAndroidPaginationEnvironment(
             onDetailsKeywordFiltered = { item, keyword ->
                 Log.e("ContentFilterExtensions", "Filtered item '${item.title}' due to keyword '$keyword' in details: ${item.content}")
             },
-        ).filter(foregroundItems)
-        return HomeFeedFilterResult(
-            foregroundItems = foregroundItems,
-            filteredItems = filteredItems,
-            reverseBlock = settings.reverseBlock,
-        )
+        ).filter(items)
     }
 
     override suspend fun recordContentInteraction(feed: Feed) {
