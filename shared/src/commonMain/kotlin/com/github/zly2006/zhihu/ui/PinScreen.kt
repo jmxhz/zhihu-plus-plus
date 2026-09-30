@@ -17,6 +17,7 @@
 
 package com.github.zly2006.zhihu.ui
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -92,18 +93,24 @@ import com.github.zly2006.zhihu.reading.ReadingPlaybackStatus
 import com.github.zly2006.zhihu.reading.ReadingQueueSourceRegistry
 import com.github.zly2006.zhihu.reading.ReadingStartRequest
 import com.github.zly2006.zhihu.reading.hasReadableFields
+import com.github.zly2006.zhihu.reading.isReadingPlayerSupported
 import com.github.zly2006.zhihu.reading.loadReadingPlaybackSpeed
 import com.github.zly2006.zhihu.reading.loadReadingPreferences
 import com.github.zly2006.zhihu.reading.rememberReadingPlayerController
 import com.github.zly2006.zhihu.reading.toReadingQueueItem
 import com.github.zly2006.zhihu.ui.components.AuthorBadge
 import com.github.zly2006.zhihu.ui.components.CommentScreenComponent
+import com.github.zly2006.zhihu.ui.components.ContentEndMarker
+import com.github.zly2006.zhihu.ui.components.PageTurnTarget
 import com.github.zly2006.zhihu.ui.components.ShareDialog
 import com.github.zly2006.zhihu.ui.components.VotersSheet
 import com.github.zly2006.zhihu.ui.components.getShareText
 import com.github.zly2006.zhihu.ui.components.handleShareAction
+import com.github.zly2006.zhihu.ui.components.pageTurnViewportWithGuide
+import com.github.zly2006.zhihu.ui.components.rememberPageTurnTarget
 import com.github.zly2006.zhihu.ui.components.rememberShareActionExecutor
 import com.github.zly2006.zhihu.util.formatCompactCount
+import com.github.zly2006.zhihu.util.jsonObject
 import com.github.zly2006.zhihu.util.twoDigitString
 import com.github.zly2006.zhihu.viewmodel.ContentLoadEnvironment
 import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
@@ -114,14 +121,12 @@ import com.github.zly2006.zhihu.viewmodel.nextUrlOrNull
 import com.github.zly2006.zhihu.viewmodel.postSigned
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.replaceOrAppendUniqueVoters
-import io.ktor.client.call.body
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
@@ -147,9 +152,9 @@ private suspend fun togglePinLike(
 ): PinLikeResult {
     val endpoint = "https://www.zhihu.com/api/v4/pins/${pin.id}/voters/up"
     val jojo = if (isLiked) {
-        environment.deleteSigned(endpoint).body<JsonObject>()
+        environment.deleteSigned(endpoint).jsonObject()
     } else {
-        environment.postSigned(endpoint).body<JsonObject>()
+        environment.postSigned(endpoint).jsonObject()
     }
     return PinLikeResult(
         isLiked = !isLiked,
@@ -239,10 +244,16 @@ fun PinScreen(
     var showShareDialog by remember { mutableStateOf(false) }
     var showComments by rememberSaveable(pin.id) { mutableStateOf(false) }
     var showVoters by rememberSaveable(pin.id) { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
     var votersNextUrl by rememberSaveable(pin.id) { mutableStateOf<String?>(null) }
     var votersLoading by rememberSaveable(pin.id) { mutableStateOf(false) }
     var votersError by rememberSaveable(pin.id) { mutableStateOf<String?>(null) }
     val voters = remember(pin.id) { mutableStateListOf<DataHolder.Author>() }
+    val pageTurnActive = pinContent != null && !showComments && !showVoters && !showShareDialog
+    val pageTurnTarget = rememberPageTurnTarget(
+        scrollState = scrollState,
+        enabled = pageTurnActive,
+    )
 
     fun loadMoreVoters(reset: Boolean = false) {
         if (votersLoading) return
@@ -323,7 +334,7 @@ fun PinScreen(
                                 }
                             }
                         },
-                        enabled = readingPlayer.isSupported && readingItem?.hasReadableFields(readingPreferences) == true,
+                        enabled = isReadingPlayerSupported && readingItem?.hasReadableFields(readingPreferences) == true,
                         modifier = Modifier.testTag(PIN_SCREEN_READING_BUTTON_TAG),
                     ) {
                         when {
@@ -396,6 +407,8 @@ fun PinScreen(
                     val loadedPin = pinContent ?: return@Box
                     PinContent(
                         pin = loadedPin,
+                        scrollState = scrollState,
+                        pageTurnTarget = pageTurnTarget,
                         environment = paginationEnvironment,
                         isLiked = isLiked,
                         likeCount = likeCount,
@@ -477,6 +490,8 @@ fun PinScreen(
 @Composable
 private fun PinContent(
     pin: DataHolder.Pin,
+    scrollState: ScrollState,
+    pageTurnTarget: PageTurnTarget,
     environment: ZhihuApiEnvironment,
     isLiked: Boolean,
     likeCount: Int,
@@ -494,7 +509,8 @@ private fun PinContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .pageTurnViewportWithGuide(pageTurnTarget)
+            .verticalScroll(scrollState)
             .testTag(PIN_SCREEN_SCROLL_TAG)
             .padding(16.dp),
     ) {
@@ -783,6 +799,7 @@ private fun PinContent(
                 )
             }
         }
+        ContentEndMarker()
         Spacer(modifier = Modifier.height(readingPlayerOverlayPadding))
     }
 }

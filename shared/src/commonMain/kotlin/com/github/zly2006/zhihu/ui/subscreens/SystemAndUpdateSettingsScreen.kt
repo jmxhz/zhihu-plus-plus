@@ -75,11 +75,14 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.github.zly2006.zhihu.data.AIGC_MARKING_ENABLED_PREFERENCE_KEY
 import com.github.zly2006.zhihu.navigation.LocalNavigator
+import com.github.zly2006.zhihu.platform.platformName
 import com.github.zly2006.zhihu.platform.rememberExternalUrlOpener
 import com.github.zly2006.zhihu.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.ui.components.SettingItem
 import com.github.zly2006.zhihu.ui.components.SettingItemGroup
 import com.github.zly2006.zhihu.ui.components.SettingItemWithSwitch
+import com.github.zly2006.zhihu.ui.components.pageTurnViewportWithGuide
+import com.github.zly2006.zhihu.ui.components.rememberPageTurnTarget
 import com.github.zly2006.zhihu.util.ContinuousUsageReminderPolicy
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
@@ -89,13 +92,14 @@ import zhihu.shared.generated.resources.ic_github_24dp
 import zhihu.shared.generated.resources.ic_telegram_24dp
 
 internal const val CONTINUOUS_USAGE_REMINDER_INTERVAL_MINUTES_KEY = "continuousUsageReminderIntervalMinutes"
+internal const val MACOS_QUIT_ON_WINDOW_CLOSE_PREFERENCE_KEY = "macosQuitOnWindowClose"
 const val SYSTEM_SETTINGS_AIGC_MARKING_TAG = "system_settings_aigc_marking"
 
 /**
  * 系统、更新和外部服务设置页。
  *
  * 页面展示更新横幅、下载/安装/跳过版本操作、GitHub Token、Nightly、遥测、防沉迷提醒和社区链接。
- * 更新相关状态由平台 [SystemUpdateRuntime] 提供，防沉迷间隔写入 [CONTINUOUS_USAGE_REMINDER_INTERVAL_MINUTES_KEY]，
+ * 更新相关状态与动作由细粒度平台能力提供，防沉迷间隔写入 [CONTINUOUS_USAGE_REMINDER_INTERVAL_MINUTES_KEY]，
  * 改动时要同时考虑 Android 更新管理器和 Desktop 运行时。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -104,7 +108,11 @@ fun SystemAndUpdateSettingsScreen(
     setting: String? = null,
 ) {
     val settings = rememberSettingsStore()
-    val updates = rememberSystemUpdateRuntime()
+    val updateStateFlow = rememberSystemUpdateState()
+    val checkForUpdate = rememberSystemUpdateChecker()
+    val skipUpdateVersion = rememberSystemUpdateVersionSkipper()
+    val downloadUpdate = rememberSystemUpdateDownloader()
+    val installDownloadedUpdate = rememberDownloadedSystemUpdateInstaller()
     val openExternalUrl = rememberExternalUrlOpener()
     val navigator = LocalNavigator.current
     val highlightedSetting = setting.orEmpty()
@@ -137,14 +145,16 @@ fun SystemAndUpdateSettingsScreen(
         },
     ) { innerPadding ->
         val scrollState = rememberScrollState()
+        val pageTurnTarget = rememberPageTurnTarget(scrollState, enabled = true)
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .pageTurnViewportWithGuide(pageTurnTarget)
                 .verticalScroll(scrollState)
                 .padding(innerPadding)
                 .padding(vertical = 16.dp),
         ) {
-            val updateState by updates.state.collectAsState()
+            val updateState by updateStateFlow.collectAsState()
             val coroutineScope = rememberCoroutineScope()
             val showUpdateBanner = updateState is SystemUpdateState.UpdateAvailable ||
                 updateState is SystemUpdateState.Downloading ||
@@ -242,7 +252,7 @@ fun SystemAndUpdateSettingsScreen(
                                     runCatching {
                                         openExternalUrl(cnDownloadUrl)
                                     }.onFailure {
-                                        updates.setError(it.message ?: "无法打开浏览器")
+                                        setSystemUpdateError(it.message ?: "无法打开浏览器")
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
@@ -264,10 +274,11 @@ fun SystemAndUpdateSettingsScreen(
                                 onClick = {
                                     val state = updateState
                                     if (state is SystemUpdateState.UpdateAvailable) {
-                                        updates.skipVersion(state.version)
+                                        skipUpdateVersion.skip(state.version)
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
+                                enabled = updateState !is SystemUpdateState.Downloaded || isApkUpdateInstallSupported,
                             ) {
                                 Text("跳过此版本", Modifier.padding(0.dp, 4.dp))
                             }
@@ -276,8 +287,8 @@ fun SystemAndUpdateSettingsScreen(
                                 onClick = {
                                     coroutineScope.launch {
                                         when (val state = updateState) {
-                                            is SystemUpdateState.UpdateAvailable -> updates.downloadUpdate(state.downloadUrl)
-                                            is SystemUpdateState.Downloaded -> updates.installDownloadedUpdate()
+                                            is SystemUpdateState.UpdateAvailable -> downloadUpdate.download(state.downloadUrl)
+                                            is SystemUpdateState.Downloaded -> installDownloadedUpdate.install()
                                             else -> {}
                                         }
                                     }
@@ -288,7 +299,11 @@ fun SystemAndUpdateSettingsScreen(
                                     when (updateState) {
                                         is SystemUpdateState.UpdateAvailable -> "下载更新"
                                         is SystemUpdateState.Downloading -> "下载中..."
-                                        is SystemUpdateState.Downloaded -> "安装更新"
+                                        is SystemUpdateState.Downloaded -> if (isApkUpdateInstallSupported) {
+                                            "安装更新"
+                                        } else {
+                                            "暂不支持安装 APK 更新"
+                                        }
                                         else -> "下载更新"
                                     },
                                     Modifier.padding(0.dp, 4.dp),
@@ -334,6 +349,23 @@ fun SystemAndUpdateSettingsScreen(
                         )
                     },
                 )
+
+                if (platformName == "macOS") {
+                    var quitOnWindowClose by remember {
+                        mutableStateOf(settings.getBoolean(MACOS_QUIT_ON_WINDOW_CLOSE_PREFERENCE_KEY, false))
+                    }
+                    SettingItemWithSwitch(
+                        title = { Text("关闭窗口时退出应用") },
+                        description = { Text("关闭最后一个窗口时同时退出 macOS 应用；默认关闭") },
+                        checked = quitOnWindowClose,
+                        onCheckedChange = {
+                            quitOnWindowClose = it
+                            settings.putBoolean(MACOS_QUIT_ON_WINDOW_CLOSE_PREFERENCE_KEY, it)
+                        },
+                        settingKey = MACOS_QUIT_ON_WINDOW_CLOSE_PREFERENCE_KEY,
+                        highlightedKey = highlightedSetting,
+                    )
+                }
 
                 var checkNightlyUpdates by remember { mutableStateOf(settings.getBoolean("checkNightlyUpdates", false)) }
                 SettingItemWithSwitch(
@@ -388,13 +420,13 @@ fun SystemAndUpdateSettingsScreen(
                         coroutineScope.launch {
                             when (updateState) {
                                 is SystemUpdateState.NoUpdate, is SystemUpdateState.Error -> {
-                                    updates.checkForUpdate()
-                                    if (updates.state.value is SystemUpdateState.UpdateAvailable) {
+                                    checkForUpdate.check()
+                                    if (updateStateFlow.value is SystemUpdateState.UpdateAvailable) {
                                         scrollState.animateScrollTo(0)
                                     }
                                 }
                                 SystemUpdateState.Latest -> {
-                                    updates.resetToNoUpdate()
+                                    resetSystemUpdateState()
                                 }
                                 else -> { /* NOOP */ }
                             }

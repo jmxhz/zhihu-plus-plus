@@ -91,7 +91,9 @@ import com.github.zly2006.zhihu.ui.components.FeedPullToRefresh
 import com.github.zly2006.zhihu.ui.components.NoOpPagerNestedScrollConnection
 import com.github.zly2006.zhihu.ui.components.PaginatedList
 import com.github.zly2006.zhihu.ui.components.ProgressIndicatorFooter
+import com.github.zly2006.zhihu.ui.components.pageTurnViewportWithGuide
 import com.github.zly2006.zhihu.ui.components.rememberNestedHorizontalPagerConnection
+import com.github.zly2006.zhihu.ui.components.rememberPageTurnTarget
 import com.github.zly2006.zhihu.ui.topLevelReselectAction
 import com.github.zly2006.zhihu.viewmodel.feed.FollowRecommendViewModel
 import com.github.zly2006.zhihu.viewmodel.feed.FollowViewModel
@@ -111,6 +113,13 @@ const val FOLLOW_RECOMMEND_REFRESH_BUTTON_TAG = "follow_recommend_refresh_button
 const val FOLLOW_DYNAMIC_LIST_TAG = "follow_dynamic_list"
 const val FOLLOW_DYNAMIC_REFRESH_BUTTON_TAG = "follow_dynamic_refresh_button"
 
+/** A preloaded inner page may own page-turn input only while the outer Follow page is visible. */
+internal fun isFollowPageTurnTargetActive(
+    followScreenActive: Boolean,
+    selectedPage: Int,
+    page: Int,
+): Boolean = followScreenActive && selectedPage == page
+
 /**
  * 关注顶层页的生产入口。
  *
@@ -120,48 +129,21 @@ const val FOLLOW_DYNAMIC_REFRESH_BUTTON_TAG = "follow_dynamic_refresh_button"
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun FollowScreen(
-    scrollToTopTrigger: Int,
-    innerPadding: PaddingValues,
-    parentPagerState: PagerState,
-): Unit = FollowScreenContent(
-    scrollToTopTrigger = scrollToTopTrigger,
-    innerPadding = innerPadding,
-    parentPagerState = parentPagerState,
-    onTestRecommendRefreshClick = null,
-    onTestRecommendLoadMore = null,
-    onTestDynamicRefreshClick = null,
-    onTestDynamicLoadMore = null,
-)
-
-/**
- * 关注页的测试入口。
- *
- * 与生产入口使用同一套 UI 内容，但允许测试注入刷新和加载更多回调，避免 instrumentation 测试依赖真实网络或分页状态。
- */
-@Composable
-fun FollowScreen(
     scrollToTopTrigger: Int = 0,
     innerPadding: PaddingValues,
     parentPagerState: PagerState,
-    onTestRecommendRefreshClick: (() -> Unit)?,
-    onTestRecommendLoadMore: (() -> Unit)?,
-    onTestDynamicRefreshClick: (() -> Unit)?,
-    onTestDynamicLoadMore: (() -> Unit)?,
+    isActive: Boolean = true,
 ): Unit = FollowScreenContent(
     scrollToTopTrigger = scrollToTopTrigger,
     innerPadding = innerPadding,
     parentPagerState = parentPagerState,
-    onTestRecommendRefreshClick = onTestRecommendRefreshClick,
-    onTestRecommendLoadMore = onTestRecommendLoadMore,
-    onTestDynamicRefreshClick = onTestDynamicRefreshClick,
-    onTestDynamicLoadMore = onTestDynamicLoadMore,
+    isActive = isActive,
 )
 
 /**
  * 关注页的实际布局实现。
  *
  * 页面内部用横向 pager 承载“推荐”和“动态”两个 tab，并把 tab 切换、列表刷新、加载更多和主壳的回到顶部触发集中在这里。
- * 因为它同时被生产入口和测试入口复用，新增 UI 状态时要保持默认参数可测试。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -169,10 +151,7 @@ private fun FollowScreenContent(
     scrollToTopTrigger: Int = 0,
     innerPadding: PaddingValues = PaddingValues(0.dp),
     parentPagerState: PagerState,
-    onTestRecommendRefreshClick: (() -> Unit)? = null,
-    onTestRecommendLoadMore: (() -> Unit)? = null,
-    onTestDynamicRefreshClick: (() -> Unit)? = null,
-    onTestDynamicLoadMore: (() -> Unit)? = null,
+    isActive: Boolean,
 ) {
     val viewModel = viewModel { FollowScreenData() }
     val titles = listOf("推荐", "动态")
@@ -217,16 +196,12 @@ private fun FollowScreenContent(
             when (page) {
                 0 -> FollowRecommendScreen(
                     scrollToTopTrigger = scrollToTopTrigger,
-                    isActive = pagerState.currentPage == 0,
-                    onTestRefreshClick = onTestRecommendRefreshClick,
-                    onTestLoadMore = onTestRecommendLoadMore,
+                    isActive = isFollowPageTurnTargetActive(isActive, pagerState.currentPage, 0),
                 )
 
                 1 -> FollowDynamicScreen(
                     scrollToTopTrigger = scrollToTopTrigger,
-                    isActive = pagerState.currentPage == 1,
-                    onTestRefreshClick = onTestDynamicRefreshClick,
-                    onTestLoadMore = onTestDynamicLoadMore,
+                    isActive = isFollowPageTurnTargetActive(isActive, pagerState.currentPage, 1),
                 )
             }
         }
@@ -371,8 +346,6 @@ fun FollowingUsersRow() {
 fun FollowRecommendScreen(
     scrollToTopTrigger: Int = 0,
     isActive: Boolean = true,
-    onTestRefreshClick: (() -> Unit)? = null,
-    onTestLoadMore: (() -> Unit)? = null,
 ) {
     val viewModel: FollowRecommendViewModel = viewModel { FollowRecommendViewModel() }
     val readingQueueSourceId = "follow:recommend"
@@ -417,19 +390,25 @@ fun FollowRecommendScreen(
     }
 
     var feedAuthorBlockRequest by remember { mutableStateOf<FeedAuthorBlockRequest?>(null) }
+    val pageTurnTarget = rememberPageTurnTarget(
+        listState = listState,
+        enabled = isActive && feedAuthorBlockRequest == null,
+    )
 
     Column {
         FeedPullToRefresh(viewModel, environment) {
             PaginatedList(
                 items = viewModel.displayItems,
                 listState = listState,
-                modifier = Modifier.testTag(FOLLOW_RECOMMEND_LIST_TAG),
+                modifier = Modifier
+                    .pageTurnViewportWithGuide(pageTurnTarget)
+                    .testTag(FOLLOW_RECOMMEND_LIST_TAG),
                 topContent = {
                     item {
                         FollowingUsersRow()
                     }
                 },
-                onLoadMore = { onTestLoadMore?.invoke() ?: viewModel.loadMore(environment) },
+                onLoadMore = { viewModel.loadMore(environment) },
                 footer = ProgressIndicatorFooter,
             ) { item ->
                 FeedCard(
@@ -493,7 +472,7 @@ fun FollowRecommendScreen(
                 DraggableRefreshButton(
                     modifier = Modifier.testTag(FOLLOW_RECOMMEND_REFRESH_BUTTON_TAG),
                     onClick = {
-                        onTestRefreshClick?.invoke() ?: viewModel.refresh(environment)
+                        viewModel.refresh(environment)
                     },
                 ) {
                     if (viewModel.isLoading) {
@@ -521,8 +500,6 @@ fun FollowRecommendScreen(
 fun FollowDynamicScreen(
     scrollToTopTrigger: Int = 0,
     isActive: Boolean = true,
-    onTestRefreshClick: (() -> Unit)? = null,
-    onTestLoadMore: (() -> Unit)? = null,
 ) {
     val viewModel: FollowViewModel = viewModel { FollowViewModel() }
     val readingQueueSourceId = "follow:dynamic"
@@ -567,14 +544,20 @@ fun FollowDynamicScreen(
     }
 
     var feedAuthorBlockRequest by remember { mutableStateOf<FeedAuthorBlockRequest?>(null) }
+    val pageTurnTarget = rememberPageTurnTarget(
+        listState = listState,
+        enabled = isActive && feedAuthorBlockRequest == null,
+    )
 
     Column {
         FeedPullToRefresh(viewModel, environment) {
             PaginatedList(
                 items = viewModel.displayItems,
                 listState = listState,
-                modifier = Modifier.testTag(FOLLOW_DYNAMIC_LIST_TAG),
-                onLoadMore = { onTestLoadMore?.invoke() ?: viewModel.loadMore(environment) },
+                modifier = Modifier
+                    .pageTurnViewportWithGuide(pageTurnTarget)
+                    .testTag(FOLLOW_DYNAMIC_LIST_TAG),
+                onLoadMore = { viewModel.loadMore(environment) },
                 topContent = {
                     item {
                         Spacer(modifier = Modifier.height(8.dp))
@@ -644,7 +627,7 @@ fun FollowDynamicScreen(
                 DraggableRefreshButton(
                     modifier = Modifier.testTag(FOLLOW_DYNAMIC_REFRESH_BUTTON_TAG),
                     onClick = {
-                        onTestRefreshClick?.invoke() ?: viewModel.refresh(environment)
+                        viewModel.refresh(environment)
                     },
                 ) {
                     if (viewModel.isLoading) {

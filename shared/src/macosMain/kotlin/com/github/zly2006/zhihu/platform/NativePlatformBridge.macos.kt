@@ -21,12 +21,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import com.github.zly2006.zhihu.data.macosAppDataDirectoryPath
 import com.github.zly2006.zhihu.data.macosBackgroundUiDebugDataDirectoryPath
+import com.github.zly2006.zhihu.ui.subscreens.MACOS_QUIT_ON_WINDOW_CLOSE_PREFERENCE_KEY
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import platform.AppKit.NSModalResponseOK
 import platform.AppKit.NSOpenPanel
 import platform.AppKit.NSPasteboard
@@ -37,14 +34,31 @@ import platform.Foundation.NSURL
 
 internal actual val nativeIsDesktop: Boolean = true
 
-private val macosQrLoginRequests = MutableStateFlow(0)
+actual val platformName: String = "macOS"
 
-internal val macosQrLoginRequestVersion: StateFlow<Int> = macosQrLoginRequests.asStateFlow()
+fun isMacosQuitOnWindowCloseEnabled(): Boolean =
+    nativeSettingsStore("settings.properties").getBoolean(MACOS_QUIT_ON_WINDOW_CLOSE_PREFERENCE_KEY, false)
+
+actual val isAigcVoteSupported: Boolean = false
 
 @Composable
 @OptIn(ExperimentalForeignApi::class)
-actual fun rememberExternalUrlOpener(): (String) -> Unit = remember {
-    { url -> NSURL.URLWithString(url)?.let(NSWorkspace.sharedWorkspace::openURL) }
+actual fun rememberExternalUrlOpener(): ExternalUrlOpener = remember {
+    object : ExternalUrlOpener {
+        override fun invoke(url: String) {
+            NSURL.URLWithString(url)?.let(NSWorkspace.sharedWorkspace::openURL)
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalForeignApi::class)
+actual fun rememberWebViewUrlOpener(): WebViewUrlOpener = remember {
+    object : WebViewUrlOpener {
+        override fun invoke(url: String) {
+            NSURL.URLWithString(url)?.let(NSWorkspace.sharedWorkspace::openURL)
+        }
+    }
 }
 
 @OptIn(ExperimentalForeignApi::class)
@@ -53,10 +67,6 @@ internal actual fun copyNativePlainText(text: String) {
         clearContents()
         setString(text, forType = NSPasteboardTypeString)
     }
-}
-
-internal actual fun requestNativeQrLogin() {
-    macosQrLoginRequests.update { it + 1 }
 }
 
 internal actual fun nativeAccountFilePath(): String =
@@ -96,3 +106,5 @@ fun showMacosUserMessage(
         "macOS user message queue is unavailable"
     }
 }
+
+internal actual val platformBottomBarItemLimit: Int? = null

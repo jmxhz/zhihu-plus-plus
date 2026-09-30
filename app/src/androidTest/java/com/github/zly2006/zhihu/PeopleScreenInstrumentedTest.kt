@@ -17,6 +17,7 @@
 
 package com.github.zly2006.zhihu
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -24,6 +25,8 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.data.FeedDisplayItem
@@ -47,9 +50,14 @@ import com.github.zly2006.zhihu.test.seedViewModel
 import com.github.zly2006.zhihu.test.setScreenContent
 import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_ANSWERS_LIST_TAG
 import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_AVATAR_TAG
+import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_BLOCK_BUTTON_TAG
+import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_FOLLOW_BUTTON_TAG
 import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_HEADER_TAG
+import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_QUESTION_AUTHOR_BLOCK_BUTTON_TAG
+import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_RECOMMENDATION_BLOCK_BUTTON_TAG
 import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_SEARCH_BUTTON_TAG
 import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_SUBSCRIPTIONS_LIST_TAG
+import com.github.zly2006.zhihu.ui.PEOPLE_SCREEN_TAB_ROW_TAG
 import com.github.zly2006.zhihu.ui.PeopleScreen
 import com.github.zly2006.zhihu.ui.PersonViewModel
 import io.ktor.http.HttpMethod
@@ -157,6 +165,81 @@ class PeopleScreenInstrumentedTest {
             ),
             navigator.destinations,
         )
+    }
+
+    /**
+     * Regression: https://github.com/zly2006/zhihu-plus-plus/issues/718
+     * Fixed by: https://github.com/zly2006/zhihu-plus-plus/pull/722
+     * Target: four badges leave the expanded action buttons visible and keep them clear of the tab row after collapse.
+     * The tab row must move upward to prove the header collapsed; changes to unrelated list pixels cannot pass.
+     */
+    @Test
+    fun denseProfileBadgesKeepHeaderActionsVisibleOffline() {
+        val viewModel = seededViewModel(itemCount = 1)
+        setPeopleScreen()
+        composeRule.activity.runOnUiThread {
+            viewModel.officialBadgeDetails = listOf(
+                OfficialBadge("社区成就", "社区成就说明"),
+                OfficialBadge("身份认证", "身份认证说明"),
+                OfficialBadge("优秀答主", "优秀答主说明"),
+                OfficialBadge("新知答主", "新知答主说明"),
+            )
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(PEOPLE_SCREEN_FOLLOW_BUTTON_TAG).assertIsDisplayed()
+        composeRule.onNodeWithTag(PEOPLE_SCREEN_BLOCK_BUTTON_TAG).assertIsDisplayed()
+        composeRule.onNodeWithTag(PEOPLE_SCREEN_RECOMMENDATION_BLOCK_BUTTON_TAG).assertIsDisplayed()
+        composeRule.onNodeWithTag(PEOPLE_SCREEN_QUESTION_AUTHOR_BLOCK_BUTTON_TAG).assertIsDisplayed()
+        val expandedTabTop = composeRule
+            .onNodeWithTag(PEOPLE_SCREEN_TAB_ROW_TAG)
+            .fetchSemanticsNode()
+            .boundsInRoot
+            .top
+        listOf(
+            PEOPLE_SCREEN_FOLLOW_BUTTON_TAG,
+            PEOPLE_SCREEN_BLOCK_BUTTON_TAG,
+            PEOPLE_SCREEN_RECOMMENDATION_BLOCK_BUTTON_TAG,
+            PEOPLE_SCREEN_QUESTION_AUTHOR_BLOCK_BUTTON_TAG,
+        ).forEach { tag ->
+            assertTrue(
+                "展开态操作按钮必须完整位于标签栏之前: $tag",
+                composeRule
+                    .onNodeWithTag(tag)
+                    .fetchSemanticsNode()
+                    .boundsInRoot.bottom <= expandedTabTop,
+            )
+        }
+
+        val listNode = composeRule.onNodeWithTag(PEOPLE_SCREEN_ANSWERS_LIST_TAG)
+        listNode.performTouchInput {
+            swipe(
+                start = Offset(centerX, height * 0.85f),
+                end = Offset(centerX, height * 0.35f),
+            )
+        }
+        composeRule.waitForIdle()
+        val collapsedTabBounds = composeRule
+            .onNodeWithTag(PEOPLE_SCREEN_TAB_ROW_TAG)
+            .fetchSemanticsNode()
+            .boundsInRoot
+        assertTrue("收起态标签栏必须保持可见", collapsedTabBounds.height > 0f)
+        assertTrue(
+            "滚动后标签栏必须上移，证明资料头已收起：展开=$expandedTabTop，收起=${collapsedTabBounds.top}",
+            expandedTabTop > collapsedTabBounds.top,
+        )
+        listOf(
+            PEOPLE_SCREEN_FOLLOW_BUTTON_TAG,
+            PEOPLE_SCREEN_BLOCK_BUTTON_TAG,
+            PEOPLE_SCREEN_RECOMMENDATION_BLOCK_BUTTON_TAG,
+            PEOPLE_SCREEN_QUESTION_AUTHOR_BLOCK_BUTTON_TAG,
+        ).forEach { tag ->
+            val buttonBounds = composeRule.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            assertTrue(
+                "收起态操作按钮不能覆盖标签栏: $tag",
+                buttonBounds.bottom <= collapsedTabBounds.top || buttonBounds.top >= collapsedTabBounds.bottom,
+            )
+        }
     }
 
     /**

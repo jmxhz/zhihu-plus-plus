@@ -61,15 +61,22 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.github.zly2006.zhihu.account.rememberZhihuAccountStore
 import com.github.zly2006.zhihu.data.ZHIHU_ME_URL
 import com.github.zly2006.zhihu.navigation.Account
 import com.github.zly2006.zhihu.navigation.LocalNavigator
 import com.github.zly2006.zhihu.navigation.SentenceSimilarityTest
+import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_READ_UUIDS_PREFERENCE_KEY
+import com.github.zly2006.zhihu.platform.isSentenceSimilaritySupported
+import com.github.zly2006.zhihu.platform.rememberIsLiteVariant
 import com.github.zly2006.zhihu.platform.rememberPlainTextClipboard
 import com.github.zly2006.zhihu.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.platform.rememberUserMessageSink
+import com.github.zly2006.zhihu.ui.HOME_PIN_ANNOUNCEMENT_READ_KEY_PREFIX
 import com.github.zly2006.zhihu.ui.TtsState
 import com.github.zly2006.zhihu.ui.components.SettingItemOverall
+import com.github.zly2006.zhihu.ui.components.pageTurnViewportWithGuide
+import com.github.zly2006.zhihu.ui.components.rememberPageTurnTarget
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
 import kotlinx.coroutines.launch
 
@@ -89,7 +96,8 @@ const val DEVELOPER_SETTINGS_COLOR_SCHEME_TAG = "developerSettings/colorScheme"
 fun DeveloperSettingsScreen() {
     val navigator = LocalNavigator.current
     val environment = rememberPaginationEnvironment(allowGuestAccess = false)
-    val runtimeInfo = rememberDeveloperRuntimeInfo()
+    val accountStore = rememberZhihuAccountStore()
+    val runtimeInfo = rememberDeveloperInfo()
     val copyPlainText = rememberPlainTextClipboard()
     val userMessages = rememberUserMessageSink()
     val coroutineScope = rememberCoroutineScope()
@@ -99,6 +107,11 @@ fun DeveloperSettingsScreen() {
     }
     var showCookieDialog by remember { mutableStateOf(false) }
     var showSignedRequestDialog by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
+    val pageTurnTarget = rememberPageTurnTarget(
+        scrollState = scrollState,
+        enabled = !showCookieDialog && !showSignedRequestDialog,
+    )
 
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
@@ -131,7 +144,8 @@ fun DeveloperSettingsScreen() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .pageTurnViewportWithGuide(pageTurnTarget)
+                .verticalScroll(scrollState)
                 .padding(innerPadding)
                 .padding(16.dp),
         ) {
@@ -159,7 +173,7 @@ fun DeveloperSettingsScreen() {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = {
                     coroutineScope.launch {
-                        if (environment.verifyLogin(environment.authenticatedCookies())) {
+                        if (accountStore.client.refreshAndSaveProfile() != null) {
                             userMessages.showShortMessage("登录成功")
                         } else {
                             userMessages.showShortMessage("登录失败")
@@ -178,12 +192,14 @@ fun DeveloperSettingsScreen() {
 
                 Button(onClick = { showSignedRequestDialog = true }) { Text("签名请求") }
 
-                Button(
-                    modifier = Modifier.testTag(DEVELOPER_SETTINGS_SENTENCE_SIMILARITY_TAG),
-                    onClick = {
-                        navigator.onNavigate(SentenceSimilarityTest)
-                    },
-                ) { Text("句子相似度") }
+                if (isSentenceSimilaritySupported && !rememberIsLiteVariant()) {
+                    Button(
+                        modifier = Modifier.testTag(DEVELOPER_SETTINGS_SENTENCE_SIMILARITY_TAG),
+                        onClick = {
+                            navigator.onNavigate(SentenceSimilarityTest)
+                        },
+                    ) { Text("句子相似度") }
+                }
 
                 Button(
                     modifier = Modifier.testTag(DEVELOPER_SETTINGS_COLOR_SCHEME_TAG),
@@ -191,6 +207,12 @@ fun DeveloperSettingsScreen() {
                         navigator.onNavigate(Account.DeveloperSettings.ColorScheme)
                     },
                 ) { Text("Color Scheme") }
+
+                Button(onClick = {
+                    settings.remove(HOME_NOTIFICATION_READ_UUIDS_PREFERENCE_KEY)
+                    settings.removeByPrefix(HOME_PIN_ANNOUNCEMENT_READ_KEY_PREFIX)
+                    userMessages.showShortMessage("已清除 online notification 和作者想法推送的已读记录")
+                }) { Text("清除所有 online notification 和作者想法推送已读记录") }
             }
 
             // TTS引擎信息显示
@@ -330,12 +352,9 @@ fun DeveloperSettingsScreen() {
                                 }
 
                                 if (cookies.isNotEmpty()) {
-                                    environment.saveCookies(cookies)
-
-                                    // 验证登录状态
                                     coroutineScope.launch {
                                         try {
-                                            if (environment.verifyLogin(cookies)) {
+                                            if (accountStore.login(cookies)) {
                                                 userMessages.showShortMessage("Cookie设置成功并验证登录状态")
                                             } else {
                                                 userMessages.showShortMessage("Cookie设置成功，但验证登录失败，请检查Cookie是否有效")

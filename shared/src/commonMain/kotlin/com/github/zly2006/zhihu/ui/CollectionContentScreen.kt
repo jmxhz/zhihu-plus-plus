@@ -66,11 +66,14 @@ import com.github.zly2006.zhihu.reading.RegisterReadingQueueSource
 import com.github.zly2006.zhihu.ui.components.FeedCard
 import com.github.zly2006.zhihu.ui.components.PaginatedList
 import com.github.zly2006.zhihu.ui.components.ProgressIndicatorFooter
+import com.github.zly2006.zhihu.ui.components.pageTurnViewportWithGuide
+import com.github.zly2006.zhihu.ui.components.rememberPageTurnTarget
 import com.github.zly2006.zhihu.viewmodel.CollectionContentEnvironment
 import com.github.zly2006.zhihu.viewmodel.CollectionContentViewModel
 import com.github.zly2006.zhihu.viewmodel.CollectionHtmlExportDialogState
 import com.github.zly2006.zhihu.viewmodel.formatArticleDateTime
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
+import com.github.zly2006.zhihu.viewmodel.sharedArticleAnswerSwitchState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,6 +86,12 @@ fun CollectionContentScreen(
     val listState = rememberLazyListState()
     var showActionsMenu by remember { mutableStateOf(false) }
     var showExportOptionsDialog by remember { mutableStateOf(false) }
+    val pageTurnTarget = rememberPageTurnTarget(
+        listState = listState,
+        enabled = !showActionsMenu &&
+            !showExportOptionsDialog &&
+            screenViewModel.exportDialogState == null,
+    )
 
     LaunchedEffect(screenViewModel) {
         if (screenViewModel.allData.isEmpty()) {
@@ -169,7 +178,8 @@ fun CollectionContentScreen(
             collectionId = collectionId,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
+                .padding(innerPadding)
+                .pageTurnViewportWithGuide(pageTurnTarget),
             listState = listState,
             tagPrefix = "collection_content",
         )
@@ -187,7 +197,7 @@ internal fun CollectionContentBody(
     displayItems: List<FeedDisplayItem> = viewModel.displayItems,
 ) {
     val navigator = LocalNavigator.current
-    val sharedData = environment.articleAnswerSwitchState()
+    val sharedData = sharedArticleAnswerSwitchState
     val readingQueueSourceId = "collection:$collectionId:contents"
     RegisterReadingQueueSource(
         sourceId = readingQueueSourceId,
@@ -232,7 +242,7 @@ internal fun CollectionContentBody(
                 .padding(vertical = 8.dp)
                 .testTag("${tagPrefix}_item_${item.stableKey}"),
         ) { _, destination ->
-            if (destination is Article && destination.type == ArticleType.Answer && sharedData != null) {
+            if (destination is Article && destination.type == ArticleType.Answer) {
                 val index = displayItems.indexOf(item)
                 val nextItems = if (index >= 0) visibleCollectionItems.drop(index + 1) else emptyList()
                 val previousItems = if (index > 0) visibleCollectionItems.take(index).reversed() else emptyList()

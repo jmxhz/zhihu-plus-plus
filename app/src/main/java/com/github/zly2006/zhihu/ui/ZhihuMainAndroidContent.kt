@@ -28,15 +28,15 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.github.zly2006.zhihu.MainActivity
 import com.github.zly2006.zhihu.platform.androidUserMessageSink
-import com.github.zly2006.zhihu.viewmodel.ArticleAnswerSwitchData
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel
+import com.github.zly2006.zhihu.viewmodel.sharedArticleAnswerSwitchState
 
 /**
  * Android 平台的 Zhihu++ 主界面入口。
@@ -47,21 +47,20 @@ import com.github.zly2006.zhihu.viewmodel.ArticleViewModel
 @Composable
 fun AndroidZhihuMain(navController: NavHostController) {
     val activity = LocalActivity.current as MainActivity
+    val isTablet = LocalConfiguration.current.smallestScreenWidthDp >= 600
     ZhihuMain(
         navController = navController,
         mainTabNavigationTarget = activity.mainTabNavigationTarget,
         navigate = activity::navigate,
+        navigateContent = activity::navigateIn,
+        enableLandscapeListDetail = true,
+        isListDetailCapable = isTablet,
         setCurrentMainTabOpenFrom = activity::setCurrentMainTabOpenFrom,
         consumeMainTabNavigationTarget = activity::consumeMainTabNavigationTarget,
         preferenceState = rememberAndroidZhihuMainPreferenceState(),
         isDarkTheme = com.github.zly2006.zhihu.theme.ThemeManager.isDarkTheme,
         articleEnterTransition = {
-            val sharedData = try {
-                ViewModelProvider(activity)[ArticleAnswerSwitchData::class.java]
-            } catch (_: Exception) {
-                null
-            }
-            when (sharedData?.answerTransitionDirection) {
+            when (sharedArticleAnswerSwitchState.answerTransitionDirection) {
                 ArticleAnswerTransitionDirection.VERTICAL_NEXT ->
                     slideInVertically(tween(300)) { it } + fadeIn(tween(300))
                 ArticleAnswerTransitionDirection.VERTICAL_PREVIOUS ->
@@ -74,12 +73,7 @@ fun AndroidZhihuMain(navController: NavHostController) {
             }
         },
         articleExitTransition = {
-            val sharedData = try {
-                ViewModelProvider(activity)[ArticleAnswerSwitchData::class.java]
-            } catch (_: Exception) {
-                null
-            }
-            when (sharedData?.answerTransitionDirection) {
+            when (sharedArticleAnswerSwitchState.answerTransitionDirection) {
                 ArticleAnswerTransitionDirection.VERTICAL_NEXT ->
                     slideOutVertically(tween(300)) { -it } + fadeOut(tween(300))
                 ArticleAnswerTransitionDirection.VERTICAL_PREVIOUS ->

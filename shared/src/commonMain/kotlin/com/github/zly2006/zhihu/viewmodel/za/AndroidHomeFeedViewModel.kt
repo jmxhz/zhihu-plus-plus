@@ -30,6 +30,7 @@ import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.navigation.resolveContent
+import com.github.zly2006.zhihu.util.jsonObject
 import com.github.zly2006.zhihu.viewmodel.ContentInteractionEnvironment
 import com.github.zly2006.zhihu.viewmodel.HomeFeedFilterResult
 import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
@@ -40,7 +41,6 @@ import com.github.zly2006.zhihu.viewmodel.feed.homeFeedContentKey
 import com.github.zly2006.zhihu.viewmodel.feed.replaceHomeFeedItemsWithFilteredResult
 import com.github.zly2006.zhihu.viewmodel.feed.shouldContinueHomeFeedAfterPage
 import com.github.zly2006.zhihu.viewmodel.postSigned
-import io.ktor.client.call.body
 import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.get
@@ -54,7 +54,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
@@ -101,7 +100,7 @@ class AndroidHomeFeedViewModel :
         if (!response.status.isSuccess()) {
             throw IllegalStateException("Android home feed request failed with status ${response.status}")
         }
-        val jojo = response.body<JsonObject>()
+        val jojo = response.jsonObject()
         val data = jojo["data"]?.jsonArray ?: throw IllegalStateException("No data found in response")
 
         // 收集所有待显示的项目

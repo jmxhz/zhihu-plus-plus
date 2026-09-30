@@ -242,13 +242,14 @@ class QuestionAnswerNavigator(
     private val order: String? = null,
     environment: ZhihuApiEnvironment,
     private val getAlreadyOpenedAnswerIds: suspend (List<Long>) -> Set<Long> = { answerIds ->
-        ContentOpenEventSupport.getAlreadyOpenedAnswerIds(
-            database = getContentFilterDatabase(),
-            answerIds = answerIds,
-            extraReadContentKeys = ContentOpenEventSupport.answerContentKeysFromDestinations(
-                (environment as? HistoryEnvironment)?.localHistory().orEmpty(),
-            ),
-        )
+        openedAnswerIdsReaderForTesting?.invoke(answerIds)
+            ?: ContentOpenEventSupport.getAlreadyOpenedAnswerIds(
+                database = getContentFilterDatabase(),
+                answerIds = answerIds,
+                extraReadContentKeys = ContentOpenEventSupport.answerContentKeysFromDestinations(
+                    (environment as? HistoryEnvironment)?.localHistory().orEmpty(),
+                ),
+            )
     },
 ) : AnswerNavigator("此问题", environment) {
     private val pendingInitialNextAnswers = ArrayDeque<Article>().also { deque ->
@@ -469,6 +470,8 @@ class QuestionAnswerNavigator(
         }
     }
 }
+
+var openedAnswerIdsReaderForTesting: (suspend (List<Long>) -> Set<Long>)? = null
 
 /**
  * 从收藏夹中导航回答。

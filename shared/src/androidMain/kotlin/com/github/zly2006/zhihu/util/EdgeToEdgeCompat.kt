@@ -25,12 +25,11 @@ import androidx.activity.enableEdgeToEdge
 inline fun ComponentActivity.enableEdgeToEdgeCompat() {
     enableEdgeToEdge()
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        // Android 16 can add a dark protection scrim over transparent status bars
+        // when contrast enforcement remains enabled, changing the app surface color.
+        window.isStatusBarContrastEnforced = false
         // Fix for three-button nav not properly going edge-to-edge.
         // TODO: https://issuetracker.google.com/issues/298296168
         window.isNavigationBarContrastEnforced = false
-        // Keep the transparent status bar composited directly over the app surface.
-        // Without this explicit setting, API 35+ can apply a dark contrast scrim
-        // during activity recreation, producing pixels darker than the app background.
-        window.isStatusBarContrastEnforced = false
     }
 }

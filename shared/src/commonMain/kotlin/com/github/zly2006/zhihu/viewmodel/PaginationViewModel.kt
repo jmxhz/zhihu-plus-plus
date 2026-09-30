@@ -24,14 +24,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.github.zly2006.zhihu.account.ZhihuIdentityClient
-import com.github.zly2006.zhihu.data.AigcVoteClient
 import com.github.zly2006.zhihu.data.AigcVoteVoter
 import com.github.zly2006.zhihu.data.ContentDetailCache
 import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.data.Feed
 import com.github.zly2006.zhihu.data.FeedDisplayItem
 import com.github.zly2006.zhihu.data.OnlineHistoryDeletePair
+import com.github.zly2006.zhihu.data.QualityFilterSettings
 import com.github.zly2006.zhihu.data.ZhihuJson.decodeJson
 import com.github.zly2006.zhihu.data.ZhihuPaging
 import com.github.zly2006.zhihu.data.executeZhihuAuthenticatedRequest
@@ -41,6 +40,7 @@ import com.github.zly2006.zhihu.data.getOrFetchContentDetail
 import com.github.zly2006.zhihu.navigation.AnswerNavigator
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.NavDestination
+import com.github.zly2006.zhihu.platform.platformName
 import com.github.zly2006.zhihu.ui.ArticleAnswerSwitchState
 import com.github.zly2006.zhihu.ui.ArticleAnswerTransitionDirection
 import com.github.zly2006.zhihu.util.Log
@@ -49,6 +49,7 @@ import com.github.zly2006.zhihu.util.signZhihuFetchRequest
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel.CachedAnswerContent
 import com.github.zly2006.zhihu.viewmodel.local.LocalRecommendationEngine
 import io.ktor.client.HttpClient
+import io.ktor.client.call.NoTransformationFoundException
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.delete
 import io.ktor.client.request.post
@@ -113,6 +114,8 @@ abstract class PaginationViewModel<T : Any>(
         loadMore(environment)
     }
 
+    protected open fun handlePageMetadata(json: JsonObject) = Unit
+
     protected open fun processResponse(environment: PaginationEnvironment, data: List<T>, rawData: JsonArray) {
         debugData.addAll(rawData) // 保存原始JSON
         allData.addAll(data) // 保存未flatten的数据
@@ -157,6 +160,11 @@ abstract class PaginationViewModel<T : Any>(
             if ("paging" in json) {
                 lastPaging = decodeJson(json["paging"]!!)
             }
+            handlePageMetadata(json)
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
+        } catch (_: NoTransformationFoundException) {
+            throw RuntimeException("您可能已被风控，请重新登录。")
         } catch (e: Exception) {
             if (e is kotlin.coroutines.cancellation.CancellationException) throw e
             lastFetchFailed = true
@@ -227,6 +235,8 @@ open class ArticleAnswerSwitchData :
     override fun promoteForNavigation(direction: ArticleAnswerTransitionDirection) = Unit
 }
 
+val sharedArticleAnswerSwitchState = ArticleAnswerSwitchData()
+
 interface PreparedArticleExportContent
 
 interface ArticleImageExportRenderer {
@@ -292,31 +302,6 @@ interface ZhihuApiEnvironment {
         error: Exception,
     ) {
         Log.e(tag ?: "PaginationViewModel", "Failed to decode item: $item", error)
-    }
-}
-
-interface AccountEnvironment {
-    suspend fun refreshAccountProfile() = Unit
-
-    fun requestLogin(): Boolean = false
-
-    fun clearAccountSession() = Unit
-
-    fun currentAccountId(): String = ""
-
-    fun identityClient(): ZhihuIdentityClient? = null
-
-    fun restartApplication() = Unit
-
-    suspend fun verifyLogin(cookies: Map<String, String>): Boolean = false
-
-    fun saveCookies(cookies: Map<String, String>) = Unit
-
-    fun logout() = clearAccountSession()
-
-    fun requestRelogin(): Boolean {
-        clearAccountSession()
-        return requestLogin()
     }
 }
 
@@ -445,7 +430,13 @@ interface ContentOpenEnvironment {
 }
 
 interface AigcVoteEnvironment {
-    fun aigcVoteClient(): AigcVoteClient? = null
+    fun isAigcVoteEnabled(): Boolean = false
+
+    fun aigcVoteHttpClient(): HttpClient = error("AIGC 内容标记客户端不可用")
+
+    fun aigcVoteBaseUrl(): String = ""
+
+    fun aigcVoteClientId(): String = ""
 
     fun aigcVoteVoter(): AigcVoteVoter? = null
 }
@@ -524,16 +515,13 @@ interface ArticleExportEnvironment {
         bitmap: Any,
     ) = Unit
 
-    fun articleImageExportRenderer(loadAssetText: (String) -> String): ArticleImageExportRenderer? = null
+    fun articleImageExportRenderer(): ArticleImageExportRenderer =
+        error("$platformName 暂不支持文章图片导出")
 }
 
 interface ArticleExportContentEnvironment :
     ArticleExportEnvironment,
     ZhihuApiEnvironment
-
-interface ArticleNavigationEnvironment {
-    fun articleAnswerSwitchState(): ArticleAnswerSwitchState? = null
-}
 
 interface ContentLoadEnvironment :
     ZhihuApiEnvironment,
@@ -547,12 +535,10 @@ interface ProfileLoadEnvironment :
 
 interface ArticleLoadEnvironment :
     ZhihuApiEnvironment,
-    ContentLoadEnvironment,
-    ArticleNavigationEnvironment
+    ContentLoadEnvironment
 
 interface PaginationEnvironment :
     ZhihuApiEnvironment,
-    AccountEnvironment,
     MobileHomeFeedEnvironment,
     FeedDisplayEnvironment,
     ContentInteractionEnvironment,
@@ -568,6 +554,7 @@ interface PaginationEnvironment :
 
 data class FeedDisplaySettings(
     val qualityFilterMode: QualityFilterMode = QualityFilterMode.RULES,
+    val qualityFilter: QualityFilterSettings = QualityFilterSettings(),
     val reverseBlock: Boolean = false,
 )
 
@@ -578,6 +565,13 @@ enum class QualityFilterMode {
 }
 
 const val QUALITY_FILTER_MODE_PREFERENCE_KEY = "qualityFilterMode"
+const val ANSWER_VOTEUP_THRESHOLD_PREFERENCE_KEY = "answerVoteupThreshold"
+const val ARTICLE_VOTEUP_THRESHOLD_PREFERENCE_KEY = "articleVoteupThreshold"
+const val ARTICLE_FOLLOWERS_THRESHOLD_PREFERENCE_KEY = "articleFollowersThreshold"
+const val VIDEO_VOTE_THRESHOLD_PREFERENCE_KEY = "videoVoteThreshold"
+const val VIDEO_FOLLOWERS_THRESHOLD_PREFERENCE_KEY = "videoFollowersThreshold"
+const val QUESTION_ANSWER_THRESHOLD_PREFERENCE_KEY = "questionAnswerThreshold"
+const val QUESTION_FOLLOWERS_THRESHOLD_PREFERENCE_KEY = "questionFollowersThreshold"
 
 data class HomeFeedFilterResult(
     val foregroundItems: List<FeedDisplayItem>,

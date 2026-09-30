@@ -95,6 +95,9 @@ import com.github.zly2006.zhihu.navigation.LocalNavigator
 import com.github.zly2006.zhihu.navigation.MyCollections
 import com.github.zly2006.zhihu.navigation.OnlineHistory
 import com.github.zly2006.zhihu.navigation.TopLevelDestination
+import com.github.zly2006.zhihu.platform.isAnswerSwipeSupported
+import com.github.zly2006.zhihu.platform.isPageTurnSupported
+import com.github.zly2006.zhihu.platform.platformBottomBarItemLimit
 import com.github.zly2006.zhihu.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.platform.rememberUserMessageSink
 import com.github.zly2006.zhihu.theme.ThemeManager
@@ -113,6 +116,9 @@ import com.github.zly2006.zhihu.ui.components.SettingItemGroup
 import com.github.zly2006.zhihu.ui.components.SettingItemOverall
 import com.github.zly2006.zhihu.ui.components.SettingItemWithSwitch
 import com.github.zly2006.zhihu.ui.components.normalizedAnswerSwitchSensitivity
+import com.github.zly2006.zhihu.ui.components.pageTurnViewportWithGuide
+import com.github.zly2006.zhihu.ui.components.rememberPageTurnTarget
+import com.github.zly2006.zhihu.ui.isLegacyWebViewSupported
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -126,6 +132,16 @@ const val PREF_LINE_HEIGHT = "contentLineHeight"
 const val PREF_BLOCK_SPACING = "contentBlockSpacing"
 const val PREF_FAB_OPACITY = "fabOpacity"
 const val DEFAULT_FAB_OPACITY = 100
+const val PREF_PAGE_TURN_PERCENT = "pageTurnPercent"
+const val DEFAULT_PAGE_TURN_PERCENT = 90
+const val PREF_PAGE_TURN_SWITCH_ANSWER = "pageTurnSwitchAnswer"
+const val DEFAULT_PAGE_TURN_SWITCH_ANSWER = true
+const val PREF_SHOW_PAGE_TURN_FAB = "showPageTurnFab"
+const val PREF_SHOW_PAGE_TURN_GUIDE = "showPageTurnGuide"
+const val DEFAULT_SHOW_PAGE_TURN_GUIDE = false
+const val PREF_SHOW_CONTENT_END_MARKER = "showContentEndMarker"
+const val DEFAULT_SHOW_CONTENT_END_MARKER = false
+const val PREF_VOLUME_KEY_PAGE_TURN = "volumeKeyPageTurn"
 const val APPEARANCE_SETTINGS_SCROLL_TAG = "appearanceSettings.scroll"
 const val APPEARANCE_SETTINGS_START_DESTINATION_TAG = "appearanceSettings.startDestination"
 const val APPEARANCE_SETTINGS_ANSWER_DOUBLE_TAP_TAG = "appearanceSettings.answerDoubleTap"
@@ -137,11 +153,13 @@ const val APPEARANCE_SETTINGS_WEBVIEW_OPTIONS_TAG = "appearanceSettings.webViewO
 const val APPEARANCE_SETTINGS_BOTTOM_BAR_SECTION_KEY = "appearanceSettings.bottomBarSection"
 const val APPEARANCE_SETTINGS_COLLECTION_DIRECT_BROWSE_TAG = "appearanceSettings.collectionDirectBrowse"
 const val APPEARANCE_SETTINGS_DISABLE_BOTTOM_SHEET_ROUNDED_CORNERS_TAG = "appearanceSettings.disableBottomSheetRoundedCorners"
+const val APPEARANCE_SETTINGS_LANDSCAPE_LIST_DETAIL_TAG = "appearanceSettings.landscapeListDetail"
 
 const val START_DESTINATION_PREFERENCE_KEY = "startDestination"
 const val BOTTOM_BAR_ITEMS_PREFERENCE_KEY = "bottom_bar_items"
 const val BOTTOM_BAR_ITEM_ORDER_PREFERENCE_KEY = "bottom_bar_item_order"
 const val COLLECTION_DIRECT_BROWSE_PREFERENCE_KEY = "collectionDirectBrowse"
+const val LANDSCAPE_LIST_DETAIL_PREFERENCE_KEY = "landscapeListDetail"
 private const val BOTTOM_BAR_ITEM_ORDER_SEPARATOR = ","
 internal val contentFontSizeLevels = (50..120 step 5).toList() + (130..200 step 10).toList()
 private val bottomBarSettingItemHeight = 64.dp
@@ -171,7 +189,16 @@ internal fun resolveValidStartDestinationKey(
     else -> Home.name
 }
 
-internal fun defaultBottomBarSelectionKeys(duo3HomeAccount: Boolean): Set<String> = if (duo3HomeAccount) {
+internal fun defaultBottomBarSelectionKeys(
+    duo3HomeAccount: Boolean,
+    maximumSelection: Int? = 5,
+): Set<String> = if (maximumSelection == null) {
+    if (duo3HomeAccount) {
+        linkedSetOf(Home.name, Follow.name, HotList.name, Daily.name, OnlineHistory.name, MyCollections.name)
+    } else {
+        linkedSetOf(Home.name, Follow.name, HotList.name, Daily.name, OnlineHistory.name, MyCollections.name, Account.name)
+    }
+} else if (duo3HomeAccount) {
     linkedSetOf(Home.name, Follow.name, Daily.name)
 } else {
     linkedSetOf(Home.name, Follow.name, Daily.name, OnlineHistory.name, Account.name)
@@ -181,11 +208,12 @@ internal fun normalizeBottomBarSelection(
     selectedKeys: Collection<String>,
     duo3HomeAccount: Boolean,
     enforceMinimumSelection: Boolean = false,
+    maximumSelection: Int? = 5,
 ): Set<String> {
     val allowedKeys = topLevelDestinationsInOrder.map { it.first }.toSet()
     val normalized = selectedKeys
         .filterTo(linkedSetOf()) { it in allowedKeys }
-        .ifEmpty { defaultBottomBarSelectionKeys(duo3HomeAccount).toMutableSet() }
+        .ifEmpty { defaultBottomBarSelectionKeys(duo3HomeAccount, maximumSelection).toMutableSet() }
 
     if (duo3HomeAccount) {
         if (Home.name in normalized) {
@@ -195,7 +223,7 @@ internal fun normalizeBottomBarSelection(
         }
     } else {
         normalized.add(Account.name)
-        while (normalized.size > 5) {
+        while (maximumSelection != null && normalized.size > maximumSelection) {
             val removableKey = listOf(
                 HotList.name,
                 MyCollections.name,
@@ -287,6 +315,7 @@ fun AppearanceSettingsScreen(
     val userMessages = rememberUserMessageSink()
 
     val scrollState = rememberScrollState()
+    val pageTurnTarget = rememberPageTurnTarget(scrollState, enabled = true)
     val navigator = LocalNavigator.current
 
     val bringIntoViewRequesters = remember { mutableStateMapOf<String, BringIntoViewRequester>() }
@@ -301,10 +330,11 @@ fun AppearanceSettingsScreen(
         val normalizedSelection = normalizeBottomBarSelection(
             settings.getStringSet(
                 BOTTOM_BAR_ITEMS_PREFERENCE_KEY,
-                defaultBottomBarSelectionKeys(duo3HomeAccount.value),
+                defaultBottomBarSelectionKeys(duo3HomeAccount.value, platformBottomBarItemLimit),
             ),
             duo3HomeAccount.value,
             enforceMinimumSelection = true,
+            maximumSelection = platformBottomBarItemLimit,
         )
         mutableStateOf(
             bottomBarItemOrderFromPreference(
@@ -313,7 +343,6 @@ fun AppearanceSettingsScreen(
             ),
         )
     }
-
     DisposableEffect(Unit) {
         onDispose {
             onExit()
@@ -360,6 +389,7 @@ fun AppearanceSettingsScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .pageTurnViewportWithGuide(pageTurnTarget)
                 .verticalScroll(scrollState)
                 .testTag(APPEARANCE_SETTINGS_SCROLL_TAG)
                 .padding(innerPadding)
@@ -584,6 +614,23 @@ fun AppearanceSettingsScreen(
                         )
                     },
                 )
+
+                val landscapeListDetailEnabled = remember {
+                    mutableStateOf(settings.getBoolean(LANDSCAPE_LIST_DETAIL_PREFERENCE_KEY, true))
+                }
+                SettingItemWithSwitch(
+                    modifier = Modifier.testTag(APPEARANCE_SETTINGS_LANDSCAPE_LIST_DETAIL_TAG),
+                    title = { Text("横屏双栏布局") },
+                    description = { Text("在平板和电脑横屏时同时显示列表与详情。手机横屏始终使用单栏。") },
+                    checked = landscapeListDetailEnabled.value,
+                    onCheckedChange = {
+                        landscapeListDetailEnabled.value = it
+                        settings.putBoolean(LANDSCAPE_LIST_DETAIL_PREFERENCE_KEY, it)
+                    },
+                    settingKey = LANDSCAPE_LIST_DETAIL_PREFERENCE_KEY,
+                    highlightedKey = settingKey,
+                    bringIntoViewRequester = requesterFor(LANDSCAPE_LIST_DETAIL_PREFERENCE_KEY),
+                )
             }
             // ── 阅读 ────────────────────────────────────────────────────────────
             SettingItemGroup(
@@ -758,6 +805,7 @@ fun AppearanceSettingsScreen(
                     title = { Text("使用 WebView 显示文章") },
                     description = { Text("关闭后使用 Compose 渲染，支持代码高亮等高级功能。警告：这个渲染模式不再推荐，非专业人士请不要开启！") },
                     checked = articleUseWebview.value,
+                    enabled = isLegacyWebViewSupported,
                     onCheckedChange = {
                         articleUseWebview.value = it
                         settings.putBoolean(ARTICLE_USE_WEBVIEW_PREFERENCE_KEY, it)
@@ -767,7 +815,7 @@ fun AppearanceSettingsScreen(
                     bringIntoViewRequester = requesterFor(ARTICLE_USE_WEBVIEW_PREFERENCE_KEY),
                 )
 
-                if (articleUseWebview.value) {
+                if (articleUseWebview.value && isLegacyWebViewSupported) {
                     var customFontName by remember {
                         mutableStateOf(settings.getStringOrNull("webviewCustomFontName"))
                     }
@@ -775,29 +823,31 @@ fun AppearanceSettingsScreen(
                         modifier = Modifier.testTag(APPEARANCE_SETTINGS_WEBVIEW_OPTIONS_TAG),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        SettingItem(
-                            modifier = Modifier.testTag(APPEARANCE_SETTINGS_WEBVIEW_FONT_TAG),
-                            title = {
-                                Text(
-                                    "WebView 自定义字体",
-                                    modifier = Modifier.testTag(APPEARANCE_SETTINGS_WEBVIEW_FONT_TAG),
-                                )
-                            },
-                            description = { Text(customFontName ?: "未设置") },
-                            bottomAction = {
-                                WebViewCustomFontSettings(
-                                    customFontName = customFontName,
-                                    onCustomFontNameChange = { name ->
-                                        if (name == null) {
-                                            settings.remove("webviewCustomFontName")
-                                        } else {
-                                            settings.putString("webviewCustomFontName", name)
-                                        }
-                                        customFontName = name
-                                    },
-                                )
-                            },
-                        )
+                        if (isWebViewCustomFontSupported) {
+                            SettingItem(
+                                modifier = Modifier.testTag(APPEARANCE_SETTINGS_WEBVIEW_FONT_TAG),
+                                title = {
+                                    Text(
+                                        "WebView 自定义字体",
+                                        modifier = Modifier.testTag(APPEARANCE_SETTINGS_WEBVIEW_FONT_TAG),
+                                    )
+                                },
+                                description = { Text(customFontName ?: "未设置") },
+                                bottomAction = {
+                                    WebViewCustomFontSettings(
+                                        customFontName = customFontName,
+                                        onCustomFontNameChange = { name ->
+                                            if (name == null) {
+                                                settings.remove("webviewCustomFontName")
+                                            } else {
+                                                settings.putString("webviewCustomFontName", name)
+                                            }
+                                            customFontName = name
+                                        },
+                                    )
+                                },
+                            )
+                        }
 
                         val useHardwareAcceleration = remember { mutableStateOf(settings.getBoolean("webviewHardwareAcceleration", true)) }
                         SettingItemWithSwitch(
@@ -891,46 +941,48 @@ fun AppearanceSettingsScreen(
                     "vertical" to "上下滑动",
                     "horizontal" to "左右滑动",
                 )
-                SettingItem(
-                    title = { Text("回答切换手势") },
-                    description = { Text("在回答页面通过手势切换同一问题下的其他回答。") },
-                    settingKey = "answerSwitchMode",
-                    highlightedKey = settingKey,
-                    bringIntoViewRequester = requesterFor("answerSwitchMode"),
-                    endAction = {
-                        ExposedDropdownMenuBox(
-                            expanded = answerSwitchExpanded,
-                            onExpandedChange = { answerSwitchExpanded = it },
-                        ) {
-                            OutlinedTextField(
-                                value = answerSwitchOptions.find { it.first == answerSwitchMode.value }?.second ?: "上下滑动切换",
-                                onValueChange = {},
-                                readOnly = true,
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = answerSwitchExpanded) },
-                                modifier = Modifier
-                                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                                    .width(160.dp),
-                                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                            )
-                            ExposedDropdownMenu(
+                if (isAnswerSwipeSupported) {
+                    SettingItem(
+                        title = { Text("回答切换手势") },
+                        description = { Text("在回答页面通过手势切换同一问题下的其他回答。") },
+                        settingKey = "answerSwitchMode",
+                        highlightedKey = settingKey,
+                        bringIntoViewRequester = requesterFor("answerSwitchMode"),
+                        endAction = {
+                            ExposedDropdownMenuBox(
                                 expanded = answerSwitchExpanded,
-                                onDismissRequest = { answerSwitchExpanded = false },
+                                onExpandedChange = { answerSwitchExpanded = it },
                             ) {
-                                answerSwitchOptions.forEach { (mode, label) ->
-                                    DropdownMenuItem(
-                                        text = { Text(label) },
-                                        onClick = {
-                                            answerSwitchMode.value = mode
-                                            settings.putString("answerSwitchMode", mode)
-                                            answerSwitchExpanded = false
-                                            userMessages.showShortMessage("已设置为：$label")
-                                        },
-                                    )
+                                OutlinedTextField(
+                                    value = answerSwitchOptions.find { it.first == answerSwitchMode.value }?.second ?: "上下滑动切换",
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = answerSwitchExpanded) },
+                                    modifier = Modifier
+                                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                                        .width(160.dp),
+                                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = answerSwitchExpanded,
+                                    onDismissRequest = { answerSwitchExpanded = false },
+                                ) {
+                                    answerSwitchOptions.forEach { (mode, label) ->
+                                        DropdownMenuItem(
+                                            text = { Text(label) },
+                                            onClick = {
+                                                answerSwitchMode.value = mode
+                                                settings.putString("answerSwitchMode", mode)
+                                                answerSwitchExpanded = false
+                                                userMessages.showShortMessage("已设置为：$label")
+                                            },
+                                        )
+                                    }
                                 }
                             }
-                        }
-                    },
-                )
+                        },
+                    )
+                }
 
                 var answerSwitchSensitivity by remember {
                     mutableStateOf(
@@ -942,7 +994,7 @@ fun AppearanceSettingsScreen(
                         ),
                     )
                 }
-                AnimatedVisibility(answerSwitchMode.value != "off") {
+                AnimatedVisibility(isAnswerSwipeSupported && answerSwitchMode.value != "off") {
                     SettingItem(
                         title = { Text("回答切换灵敏度") },
                         description = {
@@ -1056,6 +1108,7 @@ fun AppearanceSettingsScreen(
                     currentOrderKeys,
                     duo3HomeAccountEnabled,
                     enforceMinimumSelection = true,
+                    maximumSelection = platformBottomBarItemLimit,
                 )
                 val normalizedOrderKeys = normalizeBottomBarItemOrder(currentOrderKeys, normalizedSet)
                 val availableKeys = normalizedOrderKeys
@@ -1187,8 +1240,13 @@ fun AppearanceSettingsScreen(
                                                     userMessages.showShortMessage("至少保留3项")
                                                 }
 
-                                                !isChecked && selectedBottomBarItemKeys.value.size >= 5 -> {
-                                                    userMessages.showShortMessage("最多选择5项")
+                                                !isChecked -> {
+                                                    platformBottomBarItemLimit
+                                                        ?.takeIf { selectedBottomBarItemKeys.value.size >= it }
+                                                        ?.let { maximum ->
+                                                            userMessages.showShortMessage("最多选择${maximum}项")
+                                                        }
+                                                        ?: persistBottomBarSelection(candidateOrderKeys)
                                                 }
 
                                                 else -> persistBottomBarSelection(candidateOrderKeys)
@@ -1284,6 +1342,128 @@ fun AppearanceSettingsScreen(
                         settings.putBoolean("autoHideBottomBar", it)
                     },
                 )
+            }
+
+            if (isPageTurnSupported) {
+                SettingItemGroup(
+                    title = "电纸书翻页",
+                    header = {
+                        Text(
+                            "在内容列表、正文、评论区和设置等可滚动页面生效，私聊除外。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    },
+                ) {
+                    var volumeKeyPageTurn by remember {
+                        mutableStateOf(settings.getBoolean(PREF_VOLUME_KEY_PAGE_TURN, false))
+                    }
+                    SettingItemWithSwitch(
+                        title = { Text("音量键翻页") },
+                        description = { Text("短按翻页，长按跳到顶部或底部。") },
+                        checked = volumeKeyPageTurn,
+                        onCheckedChange = {
+                            volumeKeyPageTurn = it
+                            settings.putBoolean(PREF_VOLUME_KEY_PAGE_TURN, it)
+                        },
+                        settingKey = PREF_VOLUME_KEY_PAGE_TURN,
+                        highlightedKey = settingKey,
+                        bringIntoViewRequester = requesterFor(PREF_VOLUME_KEY_PAGE_TURN),
+                    )
+
+                    var pageTurnSwitchAnswer by remember {
+                        mutableStateOf(settings.getBoolean(PREF_PAGE_TURN_SWITCH_ANSWER, DEFAULT_PAGE_TURN_SWITCH_ANSWER))
+                    }
+                    SettingItemWithSwitch(
+                        title = { Text("翻页切换回答") },
+                        description = { Text("默认开启。在回答顶部继续上翻进入上一个回答，在底部继续下翻进入下一个回答。") },
+                        checked = pageTurnSwitchAnswer,
+                        onCheckedChange = {
+                            pageTurnSwitchAnswer = it
+                            settings.putBoolean(PREF_PAGE_TURN_SWITCH_ANSWER, it)
+                        },
+                        settingKey = PREF_PAGE_TURN_SWITCH_ANSWER,
+                        highlightedKey = settingKey,
+                        bringIntoViewRequester = requesterFor(PREF_PAGE_TURN_SWITCH_ANSWER),
+                    )
+
+                    var showPageTurnFab by remember {
+                        mutableStateOf(settings.getBoolean(PREF_SHOW_PAGE_TURN_FAB, false))
+                    }
+                    SettingItemWithSwitch(
+                        title = { Text("显示翻页悬浮按钮") },
+                        description = { Text("只在支持翻页的可滚动页面显示。") },
+                        checked = showPageTurnFab,
+                        onCheckedChange = {
+                            showPageTurnFab = it
+                            settings.putBoolean(PREF_SHOW_PAGE_TURN_FAB, it)
+                        },
+                        settingKey = PREF_SHOW_PAGE_TURN_FAB,
+                        highlightedKey = settingKey,
+                        bringIntoViewRequester = requesterFor(PREF_SHOW_PAGE_TURN_FAB),
+                    )
+
+                    var pageTurnPercent by remember {
+                        mutableIntStateOf(settings.getInt(PREF_PAGE_TURN_PERCENT, DEFAULT_PAGE_TURN_PERCENT))
+                    }
+                    SettingItem(
+                        title = { Text("翻页距离") },
+                        description = { Text("每次滚动可见区域的 $pageTurnPercent%。") },
+                        bottomAction = {
+                            Slider(
+                                value = pageTurnPercent.toFloat(),
+                                onValueChange = {
+                                    pageTurnPercent = (it / 5).roundToInt() * 5
+                                    settings.putInt(PREF_PAGE_TURN_PERCENT, pageTurnPercent)
+                                },
+                                valueRange = 50f..100f,
+                                steps = 9,
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            )
+                        },
+                        settingKey = PREF_PAGE_TURN_PERCENT,
+                        highlightedKey = settingKey,
+                        bringIntoViewRequester = requesterFor(PREF_PAGE_TURN_PERCENT),
+                    )
+
+                    var showGuide by remember {
+                        mutableStateOf(settings.getBoolean(PREF_SHOW_PAGE_TURN_GUIDE, DEFAULT_SHOW_PAGE_TURN_GUIDE))
+                    }
+                    SettingItemWithSwitch(
+                        title = { Text("显示翻页位置线") },
+                        description = { Text("翻页后标记上一页与下一页的重叠位置。") },
+                        checked = showGuide,
+                        onCheckedChange = {
+                            showGuide = it
+                            settings.putBoolean(PREF_SHOW_PAGE_TURN_GUIDE, it)
+                        },
+                        settingKey = PREF_SHOW_PAGE_TURN_GUIDE,
+                        highlightedKey = settingKey,
+                        bringIntoViewRequester = requesterFor(PREF_SHOW_PAGE_TURN_GUIDE),
+                    )
+
+                    var showContentEndMarker by remember {
+                        mutableStateOf(
+                            settings.getBoolean(
+                                PREF_SHOW_CONTENT_END_MARKER,
+                                DEFAULT_SHOW_CONTENT_END_MARKER,
+                            ),
+                        )
+                    }
+                    SettingItemWithSwitch(
+                        title = { Text("显示内容结束标记") },
+                        description = { Text("方便电纸书用户确定内容结束了，再向下翻页将跳转下一个内容或无效果。") },
+                        checked = showContentEndMarker,
+                        onCheckedChange = {
+                            showContentEndMarker = it
+                            settings.putBoolean(PREF_SHOW_CONTENT_END_MARKER, it)
+                        },
+                        settingKey = PREF_SHOW_CONTENT_END_MARKER,
+                        highlightedKey = settingKey,
+                        bringIntoViewRequester = requesterFor(PREF_SHOW_CONTENT_END_MARKER),
+                    )
+                }
             }
 
             // ── 交互 ────────────────────────────────────────────────────────────

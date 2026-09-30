@@ -5,9 +5,20 @@ description: Use for Zhihu++ maintenance work that scans Kotlin main sources for
 
 # Zhihu++ AI Slop Cleaner
 
+## 强制验证门禁
+
+- 单生产调用点的过滤、映射或测试专用 helper 优先内联，不得为注入时间或制造可测性扩大生产 API。
+- 回归测试必须先在基线得到红测，再在修复后用同一生产路径得到绿测；测试新 helper 不算回归证据。
+- seed、默认初始化和本地快照不能冒充真实线上数据库写入，必须使用真实管理接口或数据库读回。
+
 ## Core Rule
 
 Treat low call count as a queue for review, not proof of deletion.
+
+Use non-test production line count as a hard refactor check, measured per independent change cluster rather than
+only across the whole commit. Deleting one large client must not hide line growth caused by new owners, adapters,
+constructor parameters, or initialization glue elsewhere. A cleanup that preserves behavior but materially grows
+the production implementation is presumed wrong unless the added lines encode a demonstrated new contract.
 
 Do not treat unit-test reachability as a production contract. Before merging or preserving tests for a pure
 function, inspect whether the test caused production code to expose an `internal` helper, accept extra parameters,

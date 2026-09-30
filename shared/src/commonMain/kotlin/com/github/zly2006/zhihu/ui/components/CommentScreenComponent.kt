@@ -48,11 +48,12 @@ import com.github.zly2006.zhihu.data.ZhihuJson
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.CommentHolder
 import com.github.zly2006.zhihu.navigation.NavDestination
+import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.theme.Typography
 import com.github.zly2006.zhihu.ui.CommentScreen
 import com.github.zly2006.zhihu.ui.commentThreadKey
-import com.github.zly2006.zhihu.ui.rememberArticleHost
+import com.github.zly2006.zhihu.ui.consumePendingCommentId
 import com.github.zly2006.zhihu.viewmodel.CommentItem
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -69,9 +70,9 @@ fun CommentScreenComponent(
     isZhPlusAuthorContent: Boolean = false,
 ) {
     val settings = rememberSettingsStore()
-    val articleHost = rememberArticleHost()
+    val initialPendingCommentId = consumePendingCommentId(content)
     var pendingCommentId by remember(content) {
-        mutableStateOf(articleHost?.consumePendingCommentId(content))
+        mutableStateOf(initialPendingCommentId)
     }
     val commentsVisible = showComments || pendingCommentId != null
     var authorCommentPolicyAcknowledged by remember {
@@ -167,6 +168,11 @@ fun CommentScreenComponent(
                 commentInput = commentDrafts[contentStateKey].orEmpty(),
                 onCommentInputChange = { updateCommentDraft(contentStateKey, it) },
                 listState = rootListState,
+                pageTurnEnabled =
+                    (content is Article || content is Pin) &&
+                        activeChildComment == null &&
+                        (authorCommentPolicyAcknowledged || !isZhPlusAuthorContent),
+                showPageTurnFab = content is Pin,
                 onInitialChildCommentResolved = { rootComment, childComment ->
                     pendingChildComment = childComment
                     activeChildComment = rootComment
@@ -199,6 +205,8 @@ fun CommentScreenComponent(
                 onCommentInputChange = { updateCommentDraft(childDraftKey, it) },
                 listState = childListState,
                 initialComment = pendingChildComment,
+                pageTurnEnabled = childTarget.article is Article || childTarget.article is Pin,
+                showPageTurnFab = childTarget.article is Pin,
             )
         }
     }

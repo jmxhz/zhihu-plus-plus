@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -54,12 +55,17 @@ import com.github.zly2006.zhihu.navigation.LocalNavigator
 import com.github.zly2006.zhihu.navigation.NavDestination
 import com.github.zly2006.zhihu.navigation.Notification
 import com.github.zly2006.zhihu.notification.NotificationType
+import com.github.zly2006.zhihu.platform.isAnswerSwipeSupported
+import com.github.zly2006.zhihu.platform.isPageTurnSupported
+import com.github.zly2006.zhihu.platform.platformName
 import com.github.zly2006.zhihu.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.ui.ANSWER_DOUBLE_TAP_ACTION_PREFERENCE_KEY
 import com.github.zly2006.zhihu.ui.ARTICLE_USE_WEBVIEW_PREFERENCE_KEY
 import com.github.zly2006.zhihu.ui.components.DISABLE_BOTTOM_SHEET_ROUNDED_CORNERS_PREFERENCE_KEY
 import com.github.zly2006.zhihu.ui.components.SettingItem
 import com.github.zly2006.zhihu.ui.components.SettingItemGroup
+import com.github.zly2006.zhihu.ui.components.pageTurnViewportWithGuide
+import com.github.zly2006.zhihu.ui.components.rememberPageTurnTarget
 import com.github.zly2006.zhihu.viewmodel.QUALITY_FILTER_MODE_PREFERENCE_KEY
 
 const val SETTINGS_SEARCH_INPUT_TAG = "settingsSearch.input"
@@ -158,6 +164,7 @@ private fun notificationEntry(
 private val settingsSearchEntries = buildList {
     add(appearanceEntry("appearance.nightMode", "主题模式", "切换浅色、深色或跟随系统。", "nightMode", listOf("夜间模式", "深色模式", "暗色模式", "浅色模式", "跟随系统")))
     add(appearanceEntry("appearance.dynamicColor", "使用 Material You 动态取色", "Android 12+ 根据系统壁纸取色。", "dynamicColor", listOf("动态颜色", "壁纸取色", "主题色")))
+    add(appearanceEntry("appearance.landscapeListDetail", "横屏双栏布局", "控制平板和电脑横屏时是否同时显示列表与详情。", LANDSCAPE_LIST_DETAIL_PREFERENCE_KEY, listOf("双栏", "分栏", "平板", "横屏")))
     add(appearanceEntry("appearance.bottomSheetCorners", "禁用 popup 圆角", "评论等 popup 顶部改为直角。", DISABLE_BOTTOM_SHEET_ROUNDED_CORNERS_PREFERENCE_KEY, listOf("评论圆角", "popup", "直角")))
     add(appearanceEntry("appearance.fontScale", "字号与行高", "调整正文阅读字号和行距。", "fontScale", listOf("字体大小", "内容字体", "正文字号", "行距")))
     add(appearanceEntry("appearance.showFeedThumbnail", "显示 Feed 卡片缩略图", "控制信息流卡片图片显示。", "showFeedThumbnail", listOf("图片", "封面")))
@@ -168,7 +175,17 @@ private val settingsSearchEntries = buildList {
     add(appearanceEntry("appearance.autoHideArticleBottomBar", "自动隐藏回答底部按钮", "滚动阅读时自动隐藏底部操作栏。", "autoHideArticleBottomBar"))
     add(appearanceEntry("appearance.buttonSkipAnswer", "显示跳转下一个回答按钮", "在回答页显示快速跳转按钮。", "buttonSkipAnswer", listOf("下一个回答")))
     add(appearanceEntry("appearance.pinAnswerDate", "置顶回答日期", "调整回答日期在正文中的位置。", "pinAnswerDate"))
-    add(appearanceEntry("appearance.answerSwitchMode", "回答切换手势", "设置回答之间的上下或左右切换。", "answerSwitchMode", listOf("手势", "上下滑动", "左右滑动", "切换回答")))
+    if (isAnswerSwipeSupported) {
+        add(appearanceEntry("appearance.answerSwitchMode", "回答切换手势", "设置回答之间的上下或左右切换。", "answerSwitchMode", listOf("手势", "上下滑动", "左右滑动", "切换回答")))
+    }
+    if (isPageTurnSupported) {
+        add(appearanceEntry("appearance.pageTurnVolume", "音量键翻页", "在支持翻页的可滚动页面使用物理按键翻页。", PREF_VOLUME_KEY_PAGE_TURN, listOf("电纸书", "翻页")))
+        add(appearanceEntry("appearance.pageTurnSwitchAnswer", "翻页切换回答", "在回答顶部或底部继续翻页，切换到相邻回答。", PREF_PAGE_TURN_SWITCH_ANSWER, listOf("电纸书", "翻页", "上一个回答", "下一个回答")))
+        add(appearanceEntry("appearance.pageTurnFab", "显示翻页悬浮按钮", "在支持翻页的可滚动页面显示上下翻页按钮。", PREF_SHOW_PAGE_TURN_FAB, listOf("电纸书", "翻页")))
+        add(appearanceEntry("appearance.pageTurnDistance", "翻页距离", "设置每次滚动占可见区域的比例。", PREF_PAGE_TURN_PERCENT, listOf("电纸书", "翻页", "重叠")))
+        add(appearanceEntry("appearance.pageTurnGuide", "显示翻页位置线", "标记相邻两页的重叠位置。", PREF_SHOW_PAGE_TURN_GUIDE, listOf("电纸书", "翻页", "引导线")))
+        add(appearanceEntry("appearance.contentEndMarker", "显示内容结束标记", "方便电纸书用户确定内容结束。", PREF_SHOW_CONTENT_END_MARKER, listOf("电纸书", "翻页", "阅读结束", "内容末尾")))
+    }
     add(appearanceEntry("appearance.answerDoubleTapAction", "双击回答动作", "设置双击正文后的默认动作。", ANSWER_DOUBLE_TAP_ACTION_PREFERENCE_KEY, listOf("双击")))
     add(
         appearanceEntry(
@@ -242,6 +259,17 @@ private val settingsSearchEntries = buildList {
     add(systemEntry("system.allowTelemetry", "允许发送遥测统计数据", "控制匿名使用统计。", "allowTelemetry", listOf("统计", "隐私", "数据收集", "使用数据")))
     add(systemEntry("system.aigcMarking", "启用 AIGC 标记", "开启后可查看其他用户对内容是否疑似 AIGC 的标记。", AIGC_MARKING_ENABLED_PREFERENCE_KEY, listOf("AI", "AIGC")))
     add(systemEntry("system.reminder", "防沉迷提醒", "设置连续使用提醒的间隔。", CONTINUOUS_USAGE_REMINDER_INTERVAL_MINUTES_KEY, listOf("连续使用", "休息提醒")))
+    if (platformName == "macOS") {
+        add(
+            systemEntry(
+                "system.macosQuitOnWindowClose",
+                "关闭窗口时退出应用",
+                "关闭最后一个窗口时同时退出 macOS 应用；默认关闭。",
+                MACOS_QUIT_ON_WINDOW_CLOSE_PREFERENCE_KEY,
+                listOf("macOS", "退出应用", "关闭窗口", "退出程序"),
+            ),
+        )
+    }
 
     add(notificationEntry("notification.autoMarkAsRead", "打开通知自动已读", "进入通知页后自动标记当前批次为已读。", "autoMarkAsRead", listOf("已读", "标记已读")))
     add(notificationEntry("notification.unreadBadge", "显示未读红点", "控制首页和账号入口的未读角标。", "unreadBadge", listOf("角标", "红点", "未读数")))
@@ -286,12 +314,12 @@ fun SettingsSearchScreen() {
         mutableStateOf(settings.getBoolean("developer", false))
     }
     DisposableEffect(settings) {
-        val unregister = settings.observeKeyChanges { key ->
+        val subscription = settings.observeKeyChanges { key ->
             if (key == "developer") {
                 developerModeEnabled = settings.getBoolean("developer", false)
             }
         }
-        onDispose(unregister)
+        onDispose(subscription::close)
     }
     val results = remember(query, developerModeEnabled) {
         settingsSearchEntries
@@ -299,6 +327,8 @@ fun SettingsSearchScreen() {
             .filter { entry -> entry.matches(query) }
     }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val listState = rememberLazyListState()
+    val pageTurnTarget = rememberPageTurnTarget(listState, enabled = true)
 
     Scaffold(
         modifier = Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection),
@@ -328,8 +358,10 @@ fun SettingsSearchScreen() {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
+                .pageTurnViewportWithGuide(pageTurnTarget)
                 .testTag(SETTINGS_SEARCH_RESULTS_TAG)
                 .padding(innerPadding),
+            state = listState,
         ) {
             item {
                 OutlinedTextField(

@@ -188,6 +188,11 @@ class ContentOpenEventSupportTest {
         val contentOpenEventDao = object : ContentOpenEventDao {
             override suspend fun insert(event: ContentOpenEvent): Long = 0L
 
+            override suspend fun getOpenedContentKeys(type: String, ids: List<String>): List<String> =
+                if (type == "answer" && "31" in ids) listOf("answer:31") else emptyList()
+
+            override suspend fun getRemotelySyncedContentKeys(type: String, ids: List<String>): List<String> = emptyList()
+
             override suspend fun getOpenedContentKeysByKeys(keys: List<String>): List<String> =
                 keys.filter { it == "answer:31" }
         }

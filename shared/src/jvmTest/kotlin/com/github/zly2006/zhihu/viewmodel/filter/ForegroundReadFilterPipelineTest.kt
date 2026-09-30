@@ -158,6 +158,23 @@ class ForegroundReadFilterPipelineTest {
     }
 
     @Test
+    fun blocksRemotelyOpenedItemWithoutPretendingItWasExposedLocally() = runTest {
+        val fixture = fixture()
+        val item = item("remote", 2)
+        fixture.database.contentOpenEventDao().insert(
+            ContentOpenEvent(contentType = "article", contentId = "2", openFrom = "remote_sync"),
+        )
+
+        assertEquals(
+            listOf("article:2"),
+            fixture.database.contentOpenEventDao().getRemotelySyncedContentKeysByKeys(listOf("article:2")),
+        )
+        assertEquals(emptyList(), fixture.pipeline().filter(listOf(item)))
+        assertEquals(0, fixture.database.contentFilterDao().getRecordCount())
+        fixture.database.close()
+    }
+
+    @Test
     fun blocksOpenedArticlePinAndQuestionItems() = runTest {
         val fixture = fixture()
         val article = item("opened article", id = 1, details = "文章")
@@ -247,6 +264,26 @@ class ForegroundReadFilterPipelineTest {
     }
 
     @Test
+    fun openedKeysAreDistinctAndKeepTypesAndSourcesSeparate() = runTest {
+        val fixture = fixture()
+        try {
+            val dao = fixture.database.contentOpenEventDao()
+            repeat(2) { dao.insert(ContentOpenEvent(contentType = "article", contentId = "2", openFrom = "remote_sync")) }
+            dao.insert(ContentOpenEvent(contentType = "answer", contentId = "2", openFrom = "home_feed"))
+            val keys = listOf("article:2", "answer:2", "article:3")
+            assertEquals(listOf("answer:2", "article:2"), dao.getOpenedContentKeysByKeys(keys).sorted())
+            assertEquals(listOf("article:2"), dao.getRemotelySyncedContentKeysByKeys(keys))
+            assertEquals(emptyList(), dao.getOpenedContentKeysByKeys(emptyList()))
+            assertEquals(
+                listOf("article:2"),
+                dao.getOpenedContentKeysByKeys((1..1100).map { "article:$it" }),
+            )
+        } finally {
+            fixture.database.close()
+        }
+    }
+
+    @Test
     fun keepsFollowedItemEvenWhenAlreadyViewedOrLowQuality() = runTest {
         val fixture = fixture()
         val item = item("followed", 1, details = "1 分钟前", isFollowing = true)
@@ -266,7 +303,7 @@ class ForegroundReadFilterPipelineTest {
     }
 
     @Test
-    fun contentExposureRecorderMarksInteractionAndCleanup() = runTest {
+    fun contentExposureRecorderKeepsOldReadsAndMarksInteraction() = runTest {
         val fixture = fixture()
 
         fixture.pipeline().filter(listOf(item("item", 1, details = "文章 · 100 赞")))
@@ -276,15 +313,20 @@ class ForegroundReadFilterPipelineTest {
         assertEquals(true, record?.hasInteraction)
         fixture.database.contentFilterDao().insertOrUpdateViewRecord(
             ContentViewRecord(
-                id = "article:old",
+                id = "article:99",
                 targetType = "article",
-                targetId = "old",
+                targetId = "99",
                 firstViewTime = 0L,
                 lastViewTime = 0L,
             ),
         )
-        fixture.manager.cleanupOldData()
-        assertEquals(null, fixture.database.contentFilterDao().getViewRecord("article:old"))
+        assertEquals(
+            0L,
+            fixture.database
+                .contentFilterDao()
+                .getViewRecord("article:99")
+                ?.lastViewTime,
+        )
         fixture.database.close()
     }
 
@@ -304,8 +346,8 @@ class ForegroundReadFilterPipelineTest {
         fun pipeline(): ForegroundReadFilterPipeline = ForegroundReadFilterPipeline(
             settings = settings,
             contentFilterManager = manager,
-            blockedFeedRecordDao = database.blockedFeedRecordDao(),
             contentOpenEventDao = database.contentOpenEventDao(),
+            blockedFeedRecordDao = database.blockedFeedRecordDao(),
             cloudReadHistoryDao = database.cloudReadHistoryDao(),
         )
     }

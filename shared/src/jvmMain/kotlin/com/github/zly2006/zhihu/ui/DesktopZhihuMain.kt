@@ -26,16 +26,18 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.github.zly2006.zhihu.data.fetchHighestQualityZhihuVideoUrl
-import com.github.zly2006.zhihu.desktop.DesktopAccountStore
+import com.github.zly2006.zhihu.desktop.defaultDesktopAccountStore
 import com.github.zly2006.zhihu.desktop.openDesktopExternalUrl
 import com.github.zly2006.zhihu.navigation.Account
 import com.github.zly2006.zhihu.navigation.Article
@@ -55,12 +57,14 @@ import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.navigation.TopLevelDestination
 import com.github.zly2006.zhihu.navigation.Video
+import com.github.zly2006.zhihu.platform.platformBottomBarItemLimit
 import com.github.zly2006.zhihu.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.platform.rememberUserMessageSink
 import com.github.zly2006.zhihu.theme.ThemeManager
 import com.github.zly2006.zhihu.ui.subscreens.BOTTOM_BAR_ITEMS_PREFERENCE_KEY
 import com.github.zly2006.zhihu.ui.subscreens.BOTTOM_BAR_ITEM_ORDER_PREFERENCE_KEY
 import com.github.zly2006.zhihu.ui.subscreens.COLLECTION_DIRECT_BROWSE_PREFERENCE_KEY
+import com.github.zly2006.zhihu.ui.subscreens.LANDSCAPE_LIST_DETAIL_PREFERENCE_KEY
 import com.github.zly2006.zhihu.ui.subscreens.START_DESTINATION_PREFERENCE_KEY
 import com.github.zly2006.zhihu.ui.subscreens.bottomBarItemOrderFromPreference
 import com.github.zly2006.zhihu.ui.subscreens.defaultBottomBarSelectionKeys
@@ -69,8 +73,8 @@ import com.github.zly2006.zhihu.ui.subscreens.normalizeBottomBarSelection
 import com.github.zly2006.zhihu.ui.subscreens.resolveValidStartDestinationKey
 import com.github.zly2006.zhihu.util.signZhihuFetchRequest
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel
-import com.github.zly2006.zhihu.viewmodel.desktopArticleAnswerSwitchState
 import com.github.zly2006.zhihu.viewmodel.prepareDesktopPendingContentOpen
+import com.github.zly2006.zhihu.viewmodel.sharedArticleAnswerSwitchState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -83,9 +87,12 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun DesktopZhihuMain() {
+    /** 主返回栈控制器，承载 MainTabs 主壳和单栏页面。 */
     val navController = rememberNavController()
-    val accountStore = remember { DesktopAccountStore() }
-    val httpClient = accountStore.httpClient()
+    val accountStore = defaultDesktopAccountStore
+    val accounts by accountStore.accountsState.collectAsState()
+    val accountSession = accounts.session
+    val httpClient = remember(accountStore, accountSession) { accountStore.client.httpClient() }
     val coroutineScope = rememberCoroutineScope()
     val userMessages = rememberUserMessageSink()
     var mainTabNavigationTarget by remember { mutableStateOf<TopLevelDestination?>(null) }
@@ -101,8 +108,13 @@ fun DesktopZhihuMain() {
         }
     }
 
-    fun currentContentOpenSource(): NavDestination? {
-        val currentEntry = navController.currentBackStackEntry
+    /**
+     * 从指定返回栈的当前页面读取内容打开来源，支持右侧详情栏。
+     *
+     * @param controller 提供来源页面的返回栈控制器
+     */
+    fun currentContentOpenSource(controller: NavHostController = navController): NavDestination? {
+        val currentEntry = controller.currentBackStackEntry
         return runCatching {
             currentEntry?.toRoute<Article>()
         }.getOrNull() ?: runCatching {
@@ -118,18 +130,19 @@ fun DesktopZhihuMain() {
         }.getOrNull()
     }
 
-    fun navigate(route: NavDestination) {
+    /**
+     * 通过 [targetController] 指定的主返回栈或详情返回栈打开 [route]。
+     *
+     * @param route 要打开的页面
+     * @param targetController 持有目标页面返回栈的控制器
+     */
+    fun navigate(route: NavDestination, targetController: NavHostController = navController) {
         when (route) {
-            History -> navController.navigate(route)
-            is TopLevelDestination -> {
-                mainTabNavigationTarget = route
-                navigateToMainTabs()
-            }
             is Video -> {
                 val current = runCatching {
-                    navController.currentBackStackEntry?.toRoute<Article>()
+                    targetController.currentBackStackEntry?.toRoute<Article>()
                 }.getOrNull() ?: runCatching {
-                    navController.currentBackStackEntry?.toRoute<Question>()
+                    targetController.currentBackStackEntry?.toRoute<Question>()
                 }.getOrNull()
                 if (current == null) {
                     userMessages.showMessage("无法打开视频：未知的内容类型")
@@ -144,7 +157,7 @@ fun DesktopZhihuMain() {
                     else -> return
                 }
                 coroutineScope.launch {
-                    val cookies = accountStore.load().cookies
+                    val cookies = accountStore.session.cookies
                     val videoUrl = withContext(Dispatchers.IO) {
                         runCatching {
                             fetchHighestQualityZhihuVideoUrl(
@@ -179,9 +192,9 @@ fun DesktopZhihuMain() {
                     } else {
                         null
                     },
-                    source = currentContentOpenSource(),
+                    source = currentContentOpenSource(targetController),
                 )
-                navController.navigate(route)
+                targetController.navigate(route)
             }
         }
     }
@@ -190,6 +203,8 @@ fun DesktopZhihuMain() {
         navController = navController,
         mainTabNavigationTarget = mainTabNavigationTarget,
         navigate = ::navigate,
+        navigateContent = { destination, targetController -> navigate(destination, targetController) },
+        enableLandscapeListDetail = true,
         setCurrentMainTabOpenFrom = { currentMainTabOpenFrom = it },
         consumeMainTabNavigationTarget = { destination ->
             if (mainTabNavigationTarget == destination) {
@@ -199,7 +214,7 @@ fun DesktopZhihuMain() {
         preferenceState = rememberDesktopZhihuMainPreferenceState(),
         isDarkTheme = ThemeManager.isDarkTheme(),
         articleEnterTransition = {
-            when (desktopArticleAnswerSwitchState.answerTransitionDirection) {
+            when (sharedArticleAnswerSwitchState.answerTransitionDirection) {
                 ArticleAnswerTransitionDirection.VERTICAL_NEXT ->
                     slideInVertically(tween(300)) { it } + fadeIn(tween(300))
                 ArticleAnswerTransitionDirection.VERTICAL_PREVIOUS ->
@@ -212,7 +227,7 @@ fun DesktopZhihuMain() {
             }
         },
         articleExitTransition = {
-            when (desktopArticleAnswerSwitchState.answerTransitionDirection) {
+            when (sharedArticleAnswerSwitchState.answerTransitionDirection) {
                 ArticleAnswerTransitionDirection.VERTICAL_NEXT ->
                     slideOutVertically(tween(300)) { -it } + fadeOut(tween(300))
                 ArticleAnswerTransitionDirection.VERTICAL_PREVIOUS ->
@@ -249,10 +264,11 @@ private fun rememberDesktopZhihuMainPreferenceState(): ZhihuMainPreferenceState 
         val selectedKeys = normalizeBottomBarSelection(
             settings.getStringSet(
                 BOTTOM_BAR_ITEMS_PREFERENCE_KEY,
-                defaultBottomBarSelectionKeys(duo3HomeAccount),
+                defaultBottomBarSelectionKeys(duo3HomeAccount, platformBottomBarItemLimit),
             ),
             duo3HomeAccount,
             enforceMinimumSelection = true,
+            maximumSelection = platformBottomBarItemLimit,
         )
         val orderedSelectedKeys = bottomBarItemOrderFromPreference(
             settings.getStringOrNull(BOTTOM_BAR_ITEM_ORDER_PREFERENCE_KEY),
@@ -263,6 +279,7 @@ private fun rememberDesktopZhihuMainPreferenceState(): ZhihuMainPreferenceState 
             tapToScrollToTopEnabled = settings.getBoolean("bottomBarTapScrollToTop", true),
             autoHideBottomBar = settings.getBoolean("autoHideBottomBar", false),
             collectionDirectBrowseEnabled = settings.getBoolean(COLLECTION_DIRECT_BROWSE_PREFERENCE_KEY, false),
+            landscapeListDetailEnabled = settings.getBoolean(LANDSCAPE_LIST_DETAIL_PREFERENCE_KEY, true),
             selectedBottomBarItemKeys = orderedSelectedKeys,
             startDestination = navDestinationFromName(
                 resolveValidStartDestinationKey(

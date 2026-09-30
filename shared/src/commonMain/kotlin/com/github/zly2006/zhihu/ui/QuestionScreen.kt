@@ -117,11 +117,14 @@ import com.github.zly2006.zhihu.ui.components.ProgressIndicatorFooter
 import com.github.zly2006.zhihu.ui.components.ShareDialog
 import com.github.zly2006.zhihu.ui.components.getShareText
 import com.github.zly2006.zhihu.ui.components.handleShareAction
+import com.github.zly2006.zhihu.ui.components.pageTurnViewportWithGuide
+import com.github.zly2006.zhihu.ui.components.rememberPageTurnTarget
 import com.github.zly2006.zhihu.ui.components.rememberShareActionExecutor
 import com.github.zly2006.zhihu.viewmodel.ContentLoadEnvironment
 import com.github.zly2006.zhihu.viewmodel.addReadHistory
 import com.github.zly2006.zhihu.viewmodel.feed.QuestionFeedViewModel
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
+import com.github.zly2006.zhihu.viewmodel.sharedArticleAnswerSwitchState
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -184,7 +187,7 @@ fun QuestionScreen(
         items = viewModel.displayItems,
     )
     val paginationEnvironment = rememberPaginationEnvironment(allowGuestAccess = false)
-    val answerSwitchState = paginationEnvironment.articleAnswerSwitchState()
+    val answerSwitchState = sharedArticleAnswerSwitchState
     val listState = rememberLazyListState()
     var questionContent by remember(question.questionId) { mutableStateOf("") }
     var answerCount by remember(question.questionId) { mutableIntStateOf(0) }
@@ -209,6 +212,10 @@ fun QuestionScreen(
             listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset >= topBarTitleThresholdPx
         }
     }
+    val pageTurnTarget = rememberPageTurnTarget(
+        listState = listState,
+        enabled = !showComments && !showShareDialog,
+    )
 
     // 加载问题详情和答案
     LaunchedEffect(question.questionId, viewModel) {
@@ -270,6 +277,7 @@ fun QuestionScreen(
                 listState = listState,
                 modifier = Modifier
                     .padding(innerPadding)
+                    .pageTurnViewportWithGuide(pageTurnTarget)
                     .testTag(QUESTION_SCREEN_LIST_TAG),
                 contentPadding = PaddingValues(bottom = readingPlayerOverlayPadding),
                 footer = ProgressIndicatorFooter,
@@ -331,7 +339,7 @@ fun QuestionScreen(
                     readingQueueSourceId = answerReadingQueueSourceId,
                     modifier = Modifier.testTag("question_feed_item_${item.stableKey}"),
                 ) { _, destination ->
-                    answerSwitchState?.pendingNavigator = viewModel.createAnswerNavigatorFor(item, paginationEnvironment)
+                    answerSwitchState.pendingNavigator = viewModel.createAnswerNavigatorFor(item, paginationEnvironment)
                     destination?.let(navigator.onNavigate)
                 }
             }
