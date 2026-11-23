@@ -12,6 +12,18 @@ on:
         description: Existing immutable tag to publish
         required: false
         type: string
+      verify_release_tag:
+        description: Published tag to install in an emulator
+        required: false
+        type: string
+      verify_release_sha256:
+        description: Expected SHA-256 of the published APK
+        required: false
+        type: string
+      verify_release_cert_sha256:
+        description: Expected SHA-256 of the signing certificate
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -19,13 +31,13 @@ permissions:
 jobs:
   build:
     uses: ./.github/workflows/my-build-action.yml
-    if: startsWith(github.ref, 'refs/heads/') && inputs.release_tag == ''
+    if: startsWith(github.ref, 'refs/heads/') && inputs.release_tag == '' && inputs.verify_release_tag == ''
     with:
       name: 'Nightly Builds'
     secrets: inherit
   build_minified_release:
     uses: ./.github/workflows/my-build-action.yml
-    if: startsWith(github.ref, 'refs/heads/') && inputs.release_tag == ''
+    if: startsWith(github.ref, 'refs/heads/') && inputs.release_tag == '' && inputs.verify_release_tag == ''
     with:
       name: 'Minified Builds'
       minify: true
@@ -33,10 +45,74 @@ jobs:
     secrets: inherit
   release:
     uses: ./.github/workflows/my-build-action.yml
-    if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
+    if: inputs.verify_release_tag == '' && (startsWith(github.ref, 'refs/tags/') || inputs.release_tag != '')
     with:
       name: 'Release'
       release: true
       minify: true
       release_tag: ${{ inputs.release_tag }}
     secrets: inherit
+  verify_release_install:
+    name: Install published Android Lite (arm64-v8a)
+    if: github.event_name == 'workflow_dispatch' && inputs.verify_release_tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ inputs.verify_release_tag }}
+      EXPECTED_APK_SHA256: ${{ inputs.verify_release_sha256 }}
+      EXPECTED_CERT_SHA256: ${{ inputs.verify_release_cert_sha256 }}
+      RELEASE_APK: ${{ runner.temp }}/zhihu-release.apk
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools build-tools;36.0.0
+      - name: Download and verify the published APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]
+          [[ "$EXPECTED_APK_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$EXPECTED_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+
+          filename="zhihu++-lite-arm64-v8a-$RELEASE_TAG.apk"
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,assets |
+            jq -e --arg name "$filename" --arg tag "$RELEASE_TAG" \
+              '.tagName == $tag and (.isDraft or .isPrerelease | not) and ([.assets[].name] == [$name])'
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$filename" --output "$RELEASE_APK"
+          echo "$EXPECTED_APK_SHA256  $RELEASE_APK" | sha256sum --check
+
+          build_tools="$ANDROID_HOME/build-tools/36.0.0"
+          signatures=$("$build_tools/apksigner" verify --verbose --print-certs "$RELEASE_APK")
+          printf '%s\n' "$signatures"
+          certificate=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<< "$signatures")
+          grep -Fxq 'Number of signers: 1' <<< "$signatures"
+          test "$certificate" = "$EXPECTED_CERT_SHA256"
+          "$build_tools/zipalign" -c -P 16 4 "$RELEASE_APK"
+          manifest=$("$build_tools/aapt2" dump badging "$RELEASE_APK")
+          grep -F "package: name='com.github.zly2006.zhplus.lite'" <<< "$manifest" |
+            grep -F "versionName='$RELEASE_TAG'"
+          grep -Fx "native-code: 'arm64-v8a'" <<< "$manifest"
+          version_code=$(sed -n "s/^package: .* versionCode='\([0-9]\+\)'.*/\1/p" <<< "$manifest")
+          [[ "$version_code" =~ ^[0-9]+$ ]]
+          echo "EXPECTED_VERSION_CODE=$version_code" >> "$GITHUB_ENV"
+      - name: Grant the runner access to KVM
+        run: |
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+      - name: Install and launch in an API 35 emulator
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_5
+          emulator-options: -no-window -gpu software -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          script: bash .github/scripts/verify-release-apk-install.sh
