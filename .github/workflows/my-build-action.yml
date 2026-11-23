@@ -108,7 +108,14 @@ jobs:
       - name: Build App
         # Build .apk
         run: |
-          if [[ -z "${signingKey:-}" ]]; then
+          if [[ "${{ inputs.release }}" == "true" ]]; then
+            for setting in signingKey keyAlias keyStorePassword keyPassword; do
+              if [[ -z "${!setting}" ]]; then
+                echo "::error::Android signing is required for stable releases (missing $setting)."
+                exit 1
+              fi
+            done
+          elif [[ -z "${signingKey:-}" ]]; then
             unset signingKey keyAlias keyStorePassword keyPassword
           fi
           ./gradlew ${{ inputs.args }} assembleLiteRelease
@@ -128,6 +135,28 @@ jobs:
             exit 1
           fi
           if [[ "${{ inputs.release }}" == "true" ]]; then
+            sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+            if [[ -z "$sdk_root" || ! -d "$sdk_root/build-tools" ]]; then
+              echo "::error::Android SDK build-tools are required to verify the release APK."
+              exit 1
+            fi
+            apk_signer="$(find "$sdk_root/build-tools" -maxdepth 2 -type f -name apksigner -print | sort -V | tail -n 1)"
+            if [[ ! -x "$apk_signer" ]]; then
+              echo "::error::apksigner was not found in the Android SDK build-tools."
+              exit 1
+            fi
+            verification="$("$apk_signer" verify --verbose --print-certs "${apks[0]}")"
+            printf '%s\n' "$verification"
+            if ! grep -Fxq 'Verified using v2 scheme (APK Signature Scheme v2): true' <<< "$verification" ||
+               ! grep -Fxq 'Number of signers: 1' <<< "$verification"; then
+              echo "::error::The stable APK must have one signer and a valid v2 signature."
+              exit 1
+            fi
+            certificate="$(sed -nE 's/^.*certificate SHA-256 digest: ([[:xdigit:]]{64})$/\1/p' <<< "$verification" | tr '[:upper:]' '[:lower:]' | sort -u)"
+            if [[ "$certificate" != '89e8517fd972afc0669efb748deb4b1b3d2ca78a0c5812e7df4f39419d3fccc1' ]]; then
+              echo "::error::The APK certificate does not match the fork release certificate."
+              exit 1
+            fi
             version="${{ inputs.release_tag || github.ref_name }}"
             mv "${apks[0]}" "app/build/upload/zhihu++-lite-arm64-v8a-${version}.apk"
           else
