@@ -61,6 +61,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.github.zly2006.zhihu.account.parseCookieAssignments
 import com.github.zly2006.zhihu.account.rememberZhihuAccountStore
 import com.github.zly2006.zhihu.data.ZHIHU_ME_URL
 import com.github.zly2006.zhihu.navigation.Account
@@ -77,6 +78,7 @@ import com.github.zly2006.zhihu.ui.components.SettingItemOverall
 import com.github.zly2006.zhihu.ui.components.pageTurnViewportWithGuide
 import com.github.zly2006.zhihu.ui.components.rememberPageTurnTarget
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
+import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.launch
 
 const val DEVELOPER_SETTINGS_BACK_BUTTON_TAG = "developerSettings/backButton"
@@ -182,7 +184,9 @@ fun DeveloperSettingsScreen() {
 
                 Button(onClick = {
                     coroutineScope.launch {
-                        environment.refreshToken()
+                        check(accountStore.refreshCredentials(force = true)) {
+                            "缺少移动端刷新凭据时请重新登录；刚刚尝试过刷新时请稍后重试"
+                        }
                         userMessages.showShortMessage("刷新成功")
                     }
                 }) { Text("刷新Token") }
@@ -321,7 +325,7 @@ fun DeveloperSettingsScreen() {
                         value = cookieInputText,
                         onValueChange = { cookieInputText = it },
                         label = { Text("Cookie字符串") },
-                        placeholder = { Text("name1=value1; name2=value2; name3=value3") },
+                        placeholder = { Text("name1=value1;name2=value2") },
                         visualTransformation = if (showCookieText) VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = {
                             IconButton(onClick = { showCookieText = !showCookieText }) {
@@ -341,22 +345,15 @@ fun DeveloperSettingsScreen() {
                     onClick = {
                         if (cookieInputText.isNotBlank()) {
                             try {
-                                // 解析cookie字符串
-                                val cookies = mutableMapOf<String, String>()
-                                cookieInputText.split("; ").forEach { cookieItem ->
-                                    val parts = cookieItem.split("=", limit = 2)
-                                    if (parts.size == 2) {
-                                        cookies[parts[0].trim()] = parts[1].trim()
-                                    }
-                                }
+                                val cookies = parseCookieAssignments(cookieInputText).toMutableMap()
 
                                 if (cookies.isNotEmpty()) {
                                     coroutineScope.launch {
                                         try {
                                             if (accountStore.login(cookies)) {
-                                                userMessages.showShortMessage("Cookie设置成功并验证登录状态")
+                                                userMessages.showShortMessage("Cookie 验证通过，登录状态已更新")
                                             } else {
-                                                userMessages.showShortMessage("Cookie设置成功，但验证登录失败，请检查Cookie是否有效")
+                                                userMessages.showShortMessage("Cookie 验证失败，未更改当前登录状态，请检查 Cookie 是否有效")
                                             }
                                         } catch (e: Exception) {
                                             userMessages.showShortMessage("验证登录时发生错误：${e.message}")
@@ -449,7 +446,7 @@ fun DeveloperSettingsScreen() {
                             isLoading = true
                             coroutineScope.launch {
                                 try {
-                                    val body = environment.signedGetText(urlInput)
+                                    val body = environment.get(urlInput).bodyAsText()
                                     copyPlainText("Signed Request Response", body)
                                     responseText = body
                                     userMessages.showShortMessage("响应已复制到剪贴板")

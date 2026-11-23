@@ -26,7 +26,6 @@ import com.github.zly2006.zhihu.data.asApiEnvironment
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
 import com.github.zly2006.zhihu.navigation.NavDestination
-import com.github.zly2006.zhihu.viewmodel.postSigned
 import io.ktor.client.call.body
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
@@ -36,6 +35,8 @@ import io.ktor.http.isSuccess
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+
+const val OPEN_IN_BROWSER_PLUGIN_VERSION = "1.0.0"
 
 object OpenInBrowser {
     suspend fun openUrlInBrowser(context: Context, destination: NavDestination): Boolean {
@@ -47,7 +48,7 @@ object OpenInBrowser {
             .firstOrNull { it.description == "com.github.zly2006.zhplus.openinbrowser" }
             ?: ZhihuJson.decodeJson<Collection>(
                 environment
-                    .postSigned("https://www.zhihu.com/api/v4/collections") {
+                    .post("https://www.zhihu.com/api/v4/collections") {
                         contentType(ContentType.Application.Json)
                         setBody(
                             buildJsonObject {

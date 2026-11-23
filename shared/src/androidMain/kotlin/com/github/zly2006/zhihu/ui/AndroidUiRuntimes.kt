@@ -22,17 +22,15 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
@@ -45,7 +43,6 @@ import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.CommentHolder
 import com.github.zly2006.zhihu.navigation.NavDestination
 import com.github.zly2006.zhihu.notification.NotificationSettingsStore
-import com.github.zly2006.zhihu.platform.UserMessageSink
 import com.github.zly2006.zhihu.platform.androidSettingsStore
 import com.github.zly2006.zhihu.platform.rememberUserMessageSink
 import com.github.zly2006.zhihu.reading.AndroidReadingPlayerBridge
@@ -62,13 +59,13 @@ import com.github.zly2006.zhihu.ui.components.WebviewComp
 import com.github.zly2006.zhihu.ui.components.setupUpWebviewClient
 import com.github.zly2006.zhihu.util.EmojiManager
 import com.github.zly2006.zhihu.util.Log
+import com.github.zly2006.zhihu.util.OPEN_IN_BROWSER_PLUGIN_VERSION
 import com.github.zly2006.zhihu.util.OpenInBrowser
 import com.github.zly2006.zhihu.util.createEmojiInlineContent
 import com.github.zly2006.zhihu.util.fuckHonorService
 import com.github.zly2006.zhihu.viewmodel.SharedAndroidNotificationEnvironment
 import com.github.zly2006.zhihu.viewmodel.filter.encodeBlocklistBackup
 import com.github.zly2006.zhihu.viewmodel.filter.getContentFilterDatabase
-import com.github.zly2006.zhihu.viewmodel.filter.importBlocklistBackupFromJsonText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -169,7 +166,9 @@ actual fun rememberArticleBrowserOpener(): ArticleBrowserOpener {
             override fun invoke(article: Article) {
                 coroutineScope.launch {
                     OpenInBrowser.openUrlInBrowser(context, article)
-                    userMessages.showMessage("已发送到浏览器")
+                    userMessages.showMessage(
+                        "已发送到电脑。请使用最新版浏览器扩展（v$OPEN_IN_BROWSER_PLUGIN_VERSION）打开；如果长时间没反应，请检查电脑浏览器是否登录了与手机相同的知乎账号。",
+                    )
                 }
             }
         }
@@ -177,7 +176,7 @@ actual fun rememberArticleBrowserOpener(): ArticleBrowserOpener {
 }
 
 @Composable
-actual fun consumePendingCommentId(content: com.github.zly2006.zhihu.navigation.NavDestination): String? = remember(content) { AndroidArticleNavigationHandoff.consumeCommentId(content) }
+actual fun consumePendingCommentId(content: NavDestination): String? = remember(content) { AndroidArticleNavigationHandoff.consumeCommentId(content) }
 
 @Composable
 actual fun ArticleWebViewContent(
@@ -224,50 +223,6 @@ actual fun Modifier.articleMarkdownSelectionWorkaround(): Modifier = fuckHonorSe
 actual fun rememberHomeIsDebuggable(): Boolean {
     val context = LocalContext.current
     return (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-}
-
-@Composable
-actual fun rememberBlocklistRuleImporter(
-    userMessages: UserMessageSink,
-    onImported: (String) -> Unit,
-): BlocklistRuleImporter {
-    val context = LocalContext.current
-    val database = remember(context) { getContentFilterDatabase(context) }
-    val coroutineScope = rememberCoroutineScope()
-    val currentOnImported by rememberUpdatedState(onImported)
-    val importLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri != null) {
-            coroutineScope.launch {
-                try {
-                    val summary = withContext(Dispatchers.IO) {
-                        val text = context.contentResolver
-                            .openInputStream(uri)
-                            ?.bufferedReader()
-                            ?.readText()
-                            ?: return@withContext "读取文件失败"
-                        importBlocklistBackupFromJsonText(
-                            keywordDao = database.blockedKeywordDao(),
-                            userDao = database.blockedUserDao(),
-                            questionAuthorDao = database.blockedQuestionAuthorDao(),
-                            topicDao = database.blockedTopicDao(),
-                            text = text,
-                        )
-                    }
-                    currentOnImported(summary)
-                } catch (e: Exception) {
-                    Log.e("BlocklistSettings", "Failed to import blocklist", e)
-                    userMessages.showShortMessage("导入失败: ${e.message}")
-                }
-            }
-        }
-    }
-    return remember(importLauncher) {
-        object : BlocklistRuleImporter {
-            override fun invoke() = importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
-        }
-    }
 }
 
 @Composable
@@ -352,9 +307,11 @@ actual fun rememberNotificationEnvironment(
     settingsStore: NotificationSettingsStore,
 ): com.github.zly2006.zhihu.viewmodel.NotificationEnvironment {
     val context = LocalContext.current
-    return remember(context, settingsStore) {
+    val environment = remember(context, settingsStore) {
         SharedAndroidNotificationEnvironment(context, false, settingsStore)
     }
+    DisposableEffect(environment) { onDispose { environment.close() } }
+    return environment
 }
 
 object AndroidArticleNavigationHandoff {

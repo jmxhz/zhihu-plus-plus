@@ -176,14 +176,13 @@ kotlin {
             implementation("org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
             implementation("org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+            implementation("org.jetbrains.kotlinx:atomicfu:0.28.0")
             implementation("io.ktor:ktor-client-core:3.5.0")
             implementation("io.ktor:ktor-client-content-negotiation:3.5.0")
             implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.0")
             implementation("com.materialkolor:material-kolor:4.1.1")
             implementation("com.fleeksoft.ksoup:ksoup:0.2.6")
-            implementation(project(":latex-renderer"))
-            implementation(project(":markdown-parser"))
-            implementation(project(":markdown-renderer"))
+            implementation("me.zly2006.markdown:markdown-renderer:${property("markdown.version")}")
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
             implementation("org.jetbrains.kotlinx:kotlinx-io-core:0.8.1")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
@@ -211,6 +210,20 @@ kotlin {
                 implementation("org.jsoup:jsoup:1.22.2")
             }
         }
+        // JavaFX POM 使用 ${javafx.platform} classifier，Gradle 不会自动解析，
+        // 需要显式指定平台 classifier 以获取含实际类的 jar（裸 jar 只含空 MANIFEST）。
+        val osName = System.getProperty("os.name").lowercase()
+        val osArch = System.getProperty("os.arch").lowercase()
+        val fxClassifier =
+            when {
+                osName.contains("mac") && (osArch == "aarch64" || osArch == "arm64") -> "mac-aarch64"
+                osName.contains("mac") -> "mac"
+                osName.contains("win") -> "win"
+                osName.contains("linux") && (osArch == "aarch64" || osArch == "arm64") -> "linux-aarch64"
+                else -> "linux"
+            }
+        val javafxModules = listOf("javafx-base", "javafx-graphics", "javafx-controls", "javafx-web", "javafx-swing")
+
         jvmMain {
             kotlin.srcDir("src/tiqianMarkdownMain/kotlin")
         }
@@ -231,29 +244,14 @@ kotlin {
             //              → javafx-media → javafx-graphics
             //   javafx-swing → javafx-graphics
             //   Platform 在 javafx-graphics 中，Scene 也在 javafx-graphics 中
-            // JavaFX POM 使用 ${javafx.platform} classifier，Gradle 不会自动解析，
-            // 需要显式指定平台 classifier 以获取含实际类的 jar（裸 jar 只含空 MANIFEST）。
-            val osName = System.getProperty("os.name").lowercase()
-            val osArch = System.getProperty("os.arch").lowercase()
-            val fxClassifier =
-                when {
-                    osName.contains("mac") && (osArch == "aarch64" || osArch == "arm64") -> "mac-aarch64"
-                    osName.contains("mac") -> "mac"
-                    osName.contains("win") -> "win"
-                    osName.contains("linux") && (osArch == "aarch64" || osArch == "arm64") -> "linux-aarch64"
-                    else -> "linux"
-                }
             // 使用 compileOnly 避免将 JavaFX 传递给依赖 shared 的其他模块
-            compileOnly("org.openjfx:javafx-base:21.0.2:$fxClassifier")
-            compileOnly("org.openjfx:javafx-graphics:21.0.2:$fxClassifier")
-            compileOnly("org.openjfx:javafx-controls:21.0.2:$fxClassifier")
-            compileOnly("org.openjfx:javafx-web:21.0.2:$fxClassifier")
-            compileOnly("org.openjfx:javafx-swing:21.0.2:$fxClassifier")
+            javafxModules.forEach { compileOnly("org.openjfx:$it:21.0.2:$fxClassifier") }
         }
         macosMain.dependencies {
             implementation("io.ktor:ktor-client-darwin:3.5.0")
         }
         jvmTest.dependencies {
+            implementation("org.jetbrains.compose.ui:ui-test:1.11.1")
             implementation("org.jsoup:jsoup:1.22.2")
         }
     }

@@ -34,7 +34,6 @@ import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.QualityFilterMode
 import com.github.zly2006.zhihu.viewmodel.filter.ContentDetailProvider
 import com.github.zly2006.zhihu.viewmodel.filter.extractTopicIds
-import com.github.zly2006.zhihu.viewmodel.postSigned
 import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.header
@@ -170,6 +169,8 @@ class HomeFeedViewModel :
 
     override fun displayItemKey(item: FeedDisplayItem): String = item.homeFeedContentKey
 
+    override val resetLoadingAfterPage = false
+
     public override suspend fun fetchFeeds(environment: PaginationEnvironment) {
         markItemsAsTouched(environment)
         var pagesFetched = 0
@@ -239,7 +240,6 @@ class HomeFeedViewModel :
                     ),
                 )
                 latestLoadedDisplayItems.value = filteredItems
-                completedPageCount++
             }
             lastPageProducedVisibleItems = filteredItems.any {
                 it.homeFeedContentKey !in existingKeys
@@ -273,7 +273,7 @@ class HomeFeedViewModel :
                     else -> null
                 }
                 if (payloadItem != null) {
-                    environment.postSigned("https://www.zhihu.com/lastread/touch") {
+                    environment.post("https://www.zhihu.com/lastread/touch") {
                         header("x-requested-with", "fetch")
                         setBody(
                             MultiPartFormDataContent(
@@ -310,7 +310,7 @@ class HomeFeedViewModel :
 
             if (untouchedItemSet.isNotEmpty()) {
                 val payload = untouchedItemSet.map { (type, id) -> listOf(type, id, "touch") }
-                val response = environment.postSigned("https://www.zhihu.com/lastread/touch") {
+                val response = environment.post("https://www.zhihu.com/lastread/touch") {
                     header("x-requested-with", "fetch")
                     setBody(
                         MultiPartFormDataContent(

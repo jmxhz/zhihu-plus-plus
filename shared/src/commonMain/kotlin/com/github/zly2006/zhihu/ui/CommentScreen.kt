@@ -56,6 +56,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -66,6 +67,7 @@ import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.outlined.Comment
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
@@ -76,10 +78,13 @@ import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -114,6 +119,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -133,6 +139,11 @@ import com.fleeksoft.ksoup.Ksoup
 import com.fleeksoft.ksoup.nodes.Element
 import com.fleeksoft.ksoup.nodes.Node
 import com.fleeksoft.ksoup.nodes.TextNode
+import com.github.zly2006.zhihu.account.ZhihuAccountProfileSnapshot
+import com.github.zly2006.zhihu.account.ZhihuAccountSession
+import com.github.zly2006.zhihu.account.ZhihuRequestProfile
+import com.github.zly2006.zhihu.account.createAccountHttpClient
+import com.github.zly2006.zhihu.account.rememberZhihuAccountStore
 import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.CommentHolder
@@ -149,9 +160,12 @@ import com.github.zly2006.zhihu.platform.rememberImagePreviewOpener
 import com.github.zly2006.zhihu.platform.rememberImageSaver
 import com.github.zly2006.zhihu.platform.rememberImageSharer
 import com.github.zly2006.zhihu.platform.rememberSettingsStore
+import com.github.zly2006.zhihu.platform.rememberUserMessageSink
 import com.github.zly2006.zhihu.reading.ReadingCommentOrder
 import com.github.zly2006.zhihu.reading.loadReadingPreferences
 import com.github.zly2006.zhihu.reading.saveReadingPreferences
+import com.github.zly2006.zhihu.ui.components.CommentAccountSelection
+import com.github.zly2006.zhihu.ui.components.CommentAccountSelector
 import com.github.zly2006.zhihu.ui.components.PageTurnFab
 import com.github.zly2006.zhihu.ui.components.pageTurnContentEndMarker
 import com.github.zly2006.zhihu.ui.components.pageTurnViewportWithGuide
@@ -161,11 +175,13 @@ import com.github.zly2006.zhihu.ui.subscreens.PREF_FONT_SIZE
 import com.github.zly2006.zhihu.ui.subscreens.PREF_LINE_HEIGHT
 import com.github.zly2006.zhihu.util.twoDigitString
 import com.github.zly2006.zhihu.viewmodel.CommentItem
+import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
 import com.github.zly2006.zhihu.viewmodel.comment.BaseCommentViewModel
 import com.github.zly2006.zhihu.viewmodel.comment.ChildCommentViewModel
 import com.github.zly2006.zhihu.viewmodel.comment.CommentSortOrder
 import com.github.zly2006.zhihu.viewmodel.comment.RootCommentViewModel
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
@@ -188,6 +204,9 @@ const val COMMENT_EMOJI_BUTTON_TAG = "comment_emoji_button"
 const val COMMENT_EMOJI_PICKER_TAG = "comment_emoji_picker"
 const val COMMENT_EMOJI_ITEM_TAG_PREFIX = "comment_emoji_item_"
 const val COMMENT_SEND_BUTTON_TAG = "comment_send_button"
+const val COMMENT_SYNC_TO_PIN_TAG = "comment_sync_to_pin"
+const val COMMENT_SYNC_DEFAULT_OFF_TAG = "comment_sync_default_off"
+const val COMMENT_SYNC_DEFAULT_ON_TAG = "comment_sync_default_on"
 const val COMMENT_SORT_SCORE_TAG = "comment_sort_score"
 const val COMMENT_SORT_TIME_TAG = "comment_sort_time"
 const val COMMENT_IMAGE_MENU_OPEN_TAG = "comment_image_menu_open"
@@ -451,11 +470,24 @@ fun CommentScreen(
 ) {
     val paginationEnvironment = rememberPaginationEnvironment(allowGuestAccess = false)
     val readingSettings = rememberSettingsStore()
+    val syncPreferenceKey = "commentSyncToPinDefault"
+    var defaultSyncToPin by rememberObservedSetting(readingSettings, syncPreferenceKey) {
+        getBoolean(syncPreferenceKey, false)
+    }
+    val resolvedContent = content()
+    var syncToPin by remember(resolvedContent.commentThreadKey()) {
+        mutableStateOf(defaultSyncToPin)
+    }
+    var showSyncDefaultMenu by remember { mutableStateOf(false) }
     val initialReadingCommentOrder = remember(readingSettings) {
         loadReadingPreferences(readingSettings).commentOrder
     }
-    val resolvedContent = content()
     var isSending by remember { mutableStateOf(false) }
+    val accountStore = rememberZhihuAccountStore()
+    val userMessages = rememberUserMessageSink()
+    var selectedCommentAccount by remember(resolvedContent.commentThreadKey()) {
+        mutableStateOf<CommentAccountSelection?>(null)
+    }
     var replyToComment by remember { mutableStateOf<CommentModel?>(null) }
     var showEmojiPicker by remember { mutableStateOf(false) }
     var commentPendingDeletion by remember { mutableStateOf<CommentModel?>(null) }
@@ -648,29 +680,77 @@ fun CommentScreen(
     }
     val coroutineScope = rememberCoroutineScope()
 
-    // 提交评论函数
+    // 发送身份仅包围这次提交；恢复源会话完成之前不允许再次发送。
     fun submitComment() {
         if (commentFieldValue.text.isBlank() || isSending) return
-
         isSending = true
-        viewModel.submitComment(
-            content = content(),
-            commentText = commentFieldValue.text,
-            environment = paginationEnvironment,
-            replyToCommentId = replyToComment?.item?.id,
-        ) {
-            focusManager.clearFocus(force = true)
-            keyboardController?.hide()
-            commentFieldValue = TextFieldValue("")
-            onCommentInputChange("")
-            replyToComment = null
-            showEmojiPicker = false
-            isSending = false
-            coroutineScope.launch {
-                listState.animateScrollToItem(
-                    0,
-                    0,
-                )
+        val target = content()
+        val text = commentFieldValue.text
+        val replyId = replyToComment?.item?.id
+        val selected = selectedCommentAccount
+        coroutineScope.launch(Dispatchers.Main.immediate) {
+            var sent = false
+            try {
+                val submit: suspend (ZhihuAccountSession?) -> Unit = { session ->
+                    val cookies = session?.cookies?.toMutableMap()
+                    val client = session?.let { createAccountHttpClient(requireNotNull(cookies), it.userAgent) }
+                    try {
+                        val environment = if (client == null) {
+                            paginationEnvironment
+                        } else {
+                            object : ZhihuApiEnvironment {
+                                override val accountClient = null
+
+                                override fun httpClient(profile: ZhihuRequestProfile) = client
+
+                                override fun authenticatedCookies(): Map<String, String> = requireNotNull(cookies)
+
+                                override suspend fun handleFetchFailure(tag: String?, error: Exception) =
+                                    paginationEnvironment.handleFetchFailure(tag, error)
+                            }
+                        }
+                        sent = viewModel.submitComment(
+                            content = target,
+                            commentText = text,
+                            environment = environment,
+                            replyToCommentId = replyId,
+                            syncToPin = syncToPin && rootContent !is SegmentCommentHolder,
+                        )
+                    } finally {
+                        client?.close()
+                    }
+                }
+                if (selected == null) {
+                    submit(null)
+                } else {
+                    accountStore.withCommentIdentity(
+                        selected.sourceAccountId,
+                        ZhihuAccountProfileSnapshot(
+                            id = selected.identity.id,
+                            name = selected.identity.name,
+                            urlToken = selected.identity.urlToken,
+                            avatarUrl = selected.identity.avatarUrl,
+                        ),
+                        block = submit,
+                    )
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val message = if (sent) "评论已发送，恢复原账号失败，请联网后重试" else e.message ?: "评论发送失败"
+                userMessages.showLongMessage(message)
+            } finally {
+                if (sent) {
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
+                    commentFieldValue = TextFieldValue("")
+                    onCommentInputChange("")
+                    syncToPin = defaultSyncToPin
+                    replyToComment = null
+                    showEmojiPicker = false
+                    coroutineScope.launch { listState.animateScrollToItem(0, 0) }
+                }
+                isSending = false
             }
         }
     }
@@ -1134,11 +1214,83 @@ fun CommentScreen(
                                     color = MaterialTheme.colorScheme.onSurface,
                                 ),
                             )
+                        }
 
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (rootContent !is SegmentCommentHolder) {
+                                ExposedDropdownMenuBox(
+                                    expanded = showSyncDefaultMenu,
+                                    onExpandedChange = { showSyncDefaultMenu = it },
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .sizeIn(minHeight = 48.dp)
+                                            // 只复用锚点定位，是否打开菜单由下方的勾选动作决定。
+                                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled = false)
+                                            .toggleable(
+                                                value = syncToPin || showSyncDefaultMenu,
+                                                enabled = !isSending,
+                                                role = Role.Checkbox,
+                                                onValueChange = { checked ->
+                                                    if (checked) {
+                                                        showSyncDefaultMenu = true
+                                                    } else {
+                                                        syncToPin = false
+                                                        readingSettings.putBoolean(syncPreferenceKey, false)
+                                                    }
+                                                },
+                                            ).testTag(COMMENT_SYNC_TO_PIN_TAG),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Checkbox(
+                                            checked = syncToPin || showSyncDefaultMenu,
+                                            onCheckedChange = null,
+                                            enabled = !isSending,
+                                            modifier = Modifier.padding(end = 8.dp),
+                                        )
+                                        Text("同时发布到想法", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    ExposedDropdownMenu(
+                                        expanded = showSyncDefaultMenu,
+                                        onDismissRequest = { showSyncDefaultMenu = false },
+                                        matchAnchorWidth = false,
+                                    ) {
+                                        listOf(false to "只同步一次", true to "默认同步到想法").forEach { (value, label) ->
+                                            DropdownMenuItem(
+                                                text = { Text(label) },
+                                                leadingIcon = {
+                                                    if (defaultSyncToPin == value) {
+                                                        Icon(Icons.Default.Check, contentDescription = "已选择")
+                                                    } else {
+                                                        Spacer(Modifier.size(24.dp))
+                                                    }
+                                                },
+                                                modifier = Modifier.testTag(if (value) COMMENT_SYNC_DEFAULT_ON_TAG else COMMENT_SYNC_DEFAULT_OFF_TAG),
+                                                onClick = {
+                                                    syncToPin = true
+                                                    readingSettings.putBoolean(syncPreferenceKey, value)
+                                                    defaultSyncToPin = value
+                                                    showSyncDefaultMenu = false
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            Box(Modifier.weight(1f).padding(start = 12.dp)) {
+                                CommentAccountSelector(
+                                    selectedAccount = selectedCommentAccount,
+                                    enabled = !isSending,
+                                    onSelected = { selectedCommentAccount = it },
+                                )
+                            }
                             IconButton(
                                 onClick = { submitComment() },
                                 modifier = Modifier
-                                    .size(24.dp)
+                                    .size(48.dp)
                                     .testTag(COMMENT_SEND_BUTTON_TAG),
                                 enabled = !isSending && commentFieldValue.text.isNotBlank(),
                             ) {

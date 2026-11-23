@@ -53,6 +53,8 @@ data class ZhihuAccountSession(
 data class ZhihuSavedAccount(
     val id: String,
     val session: ZhihuAccountSession,
+    /** 临时使用马甲号后用于切回原身份的最新凭据；恢复完成后清除。 */
+    val pendingCommentIdentity: ZhihuAccountSession? = null,
 )
 
 @Serializable
@@ -81,7 +83,7 @@ class ZhihuAccountRepository(
     fun loadAccounts(): ZhihuAccounts = runCatching {
         val text = store.readText()?.takeIf { it.isNotBlank() } ?: return@runCatching ZhihuAccounts()
         val element = json.parseToJsonElement(text)
-        if (element is JsonObject && "accounts" in element) {
+        val loaded = if (element is JsonObject && "accounts" in element) {
             json.decodeFromString<ZhihuAccounts>(text)
         } else {
             val session = json.decodeFromString<ZhihuAccountSession>(text)
@@ -92,6 +94,15 @@ class ZhihuAccountRepository(
                 ZhihuAccounts()
             }
         }
+        loaded.copy(
+            accounts = loaded.accounts.map { account ->
+                val session = account.session
+                val profile = session.profile ?: session.self?.let { raw ->
+                    runCatching { ZhihuJson.decodeJson<ZhihuAccountProfileSnapshot>(raw) }.getOrNull()?.takeIf { it.id.isNotBlank() }
+                }
+                if (profile == session.profile) account else account.copy(session = session.copy(profile = profile))
+            },
+        )
     }.getOrDefault(ZhihuAccounts())
 
     fun load(): ZhihuAccountSession = loadAccounts().session

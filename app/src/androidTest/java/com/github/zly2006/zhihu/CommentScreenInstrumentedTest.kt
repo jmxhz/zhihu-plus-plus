@@ -69,11 +69,11 @@ import com.github.zly2006.zhihu.ui.CommentScreen
 import com.github.zly2006.zhihu.ui.components.CommentScreenComponent
 import com.github.zly2006.zhihu.viewmodel.CommentItem
 import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
+import com.github.zly2006.zhihu.viewmodel.SharedAndroidPaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
 import com.github.zly2006.zhihu.viewmodel.comment.BaseCommentViewModel
 import com.github.zly2006.zhihu.viewmodel.filter.BlockedUser
 import com.github.zly2006.zhihu.viewmodel.filter.getContentFilterDatabase
-import com.github.zly2006.zhihu.viewmodel.paginationEnvironment
 import io.ktor.http.HttpMethod
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
@@ -500,7 +500,9 @@ class CommentScreenInstrumentedTest {
             CommentItem(comment, CommentHolder(comment.id, article))
 
         suspend fun processForTest(context: android.content.Context, data: List<DataHolder.Comment>) {
-            processResponse(paginationEnvironment(context), data, JsonArray(emptyList()))
+            SharedAndroidPaginationEnvironment(context, allowGuestAccess).use { environment ->
+                processResponse(environment, data, JsonArray(emptyList()))
+            }
         }
 
         override fun loadMore(environment: PaginationEnvironment) {
@@ -511,13 +513,13 @@ class CommentScreenInstrumentedTest {
             refreshHistory += sortOrder
         }
 
-        override fun submitComment(
+        override suspend fun submitComment(
             content: NavDestination,
             commentText: String,
             environment: ZhihuApiEnvironment,
             replyToCommentId: String?,
-            onSuccess: () -> Unit,
-        ) = Unit
+            syncToPin: Boolean,
+        ): Boolean = false
     }
 
     private class SeededChildCommentViewModel(
@@ -544,13 +546,13 @@ class CommentScreenInstrumentedTest {
 
         override fun loadMore(environment: PaginationEnvironment) = Unit
 
-        override fun submitComment(
+        override suspend fun submitComment(
             content: NavDestination,
             commentText: String,
             environment: ZhihuApiEnvironment,
             replyToCommentId: String?,
-            onSuccess: () -> Unit,
-        ) {
+            syncToPin: Boolean,
+        ): Boolean {
             submissions += Submission(commentText, replyToCommentId)
             allData.add(
                 0,
@@ -586,7 +588,7 @@ class CommentScreenInstrumentedTest {
                     childComments = emptyList(),
                 ),
             )
-            onSuccess()
+            return true
         }
     }
 

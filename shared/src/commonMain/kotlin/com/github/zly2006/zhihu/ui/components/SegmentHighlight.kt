@@ -60,14 +60,7 @@ import com.github.zly2006.zhihu.platform.rememberPlainTextClipboard
 import com.github.zly2006.zhihu.util.SegmentHighlightSpan
 import com.github.zly2006.zhihu.util.json
 import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
-import com.github.zly2006.zhihu.viewmodel.deleteSigned
-import com.github.zly2006.zhihu.viewmodel.postSigned
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
-import com.hrm.markdown.parser.ast.ContainerNode
-import com.hrm.markdown.parser.ast.Document
-import com.hrm.markdown.parser.ast.Node
-import com.hrm.markdown.parser.ast.SegmentHighlight
-import com.hrm.markdown.renderer.LocalOnSegmentHighlightClick
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
@@ -78,6 +71,11 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import me.zly2006.markdown.parser.ast.ContainerNode
+import me.zly2006.markdown.parser.ast.Document
+import me.zly2006.markdown.parser.ast.Node
+import me.zly2006.markdown.parser.ast.SegmentHighlight
+import me.zly2006.markdown.renderer.LocalOnSegmentHighlightClick
 import kotlin.math.roundToInt
 
 /**
@@ -239,13 +237,13 @@ private suspend fun toggleSegmentLike(
     if (environment.authenticatedCookies()["d_c0"] == null) return highlight.meta
 
     return if (highlight.meta.isLike) {
-        environment.deleteSigned(url) {
+        environment.delete(url) {
             contentType(ContentType.Application.Json)
             setBody(buildSegmentUnlikeBody(highlight))
         }
         updateSegmentMetaAfterUnlike(highlight)
     } else {
-        val response = environment.postSigned(url) {
+        val response = environment.post(url) {
             contentType(ContentType.Application.Json)
             setBody(buildSegmentLikeBody(highlight))
         }

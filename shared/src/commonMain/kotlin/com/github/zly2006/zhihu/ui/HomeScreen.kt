@@ -76,6 +76,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -99,6 +100,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
+import com.github.zly2006.zhihu.account.ZhihuRequestProfile
 import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.data.Feed
 import com.github.zly2006.zhihu.data.MOBILE_NOTIFICATION_MESSAGE_URL
@@ -108,21 +110,14 @@ import com.github.zly2006.zhihu.data.target
 import com.github.zly2006.zhihu.filter.RemoteHistorySync
 import com.github.zly2006.zhihu.navigation.Account
 import com.github.zly2006.zhihu.navigation.Article
-import com.github.zly2006.zhihu.navigation.ArticleType
 import com.github.zly2006.zhihu.navigation.LocalNavigator
 import com.github.zly2006.zhihu.navigation.Notification
 import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Search
 import com.github.zly2006.zhihu.navigation.WritePin
 import com.github.zly2006.zhihu.navigation.requestLoginNavigation
-import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_ACTION_OPEN_ANSWER
-import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_ACTION_OPEN_ARTICLE
-import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_ACTION_OPEN_PIN
-import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_ACTION_OPEN_UPDATE_SETTINGS
-import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_ACTION_OPEN_URL
-import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_ACTION_OPEN_WEBVIEW
-import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_ACTION_SET_SETTING
 import com.github.zly2006.zhihu.notification.HOME_NOTIFICATION_REFRESH_INTERVAL_MILLIS
+import com.github.zly2006.zhihu.notification.HomeNotificationAction
 import com.github.zly2006.zhihu.notification.OnlineHomeNotification
 import com.github.zly2006.zhihu.notification.OnlineHomeNotificationRepository
 import com.github.zly2006.zhihu.notification.rememberNotificationSettingsStore
@@ -155,8 +150,6 @@ import com.github.zly2006.zhihu.ui.subscreens.SystemUpdateState
 import com.github.zly2006.zhihu.ui.subscreens.rememberSystemUpdateState
 import com.github.zly2006.zhihu.util.Log
 import com.github.zly2006.zhihu.util.json
-import com.github.zly2006.zhihu.viewmodel.QUALITY_FILTER_MODE_PREFERENCE_KEY
-import com.github.zly2006.zhihu.viewmodel.QualityFilterMode
 import com.github.zly2006.zhihu.viewmodel.feed.BaseFeedViewModel
 import com.github.zly2006.zhihu.viewmodel.feed.HomeFeedInteractionViewModel
 import com.github.zly2006.zhihu.viewmodel.feed.HomeFeedViewModel
@@ -177,11 +170,6 @@ import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.readString
 import kotlinx.io.writeString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlin.time.Clock
 
 const val PREFERENCE_NAME = "com.github.zly2006.zhihu_preferences"
@@ -309,6 +297,12 @@ fun HomeScreen(
     var authorPinAnnouncements by homeState.authorPinAnnouncements
 
     val listState = rememberLazyListState()
+    var settledFeedSize by remember(viewModel) { mutableIntStateOf(viewModel.displayItems.size) }
+    val isFeedLoading = viewModel.isLoading
+    val visibleFeedSize = viewModel.displayItems.size
+    SideEffect {
+        if (!isFeedLoading || visibleFeedSize == 0) settledFeedSize = visibleFeedSize
+    }
     var cachedScrollToTopTrigger by remember { mutableIntStateOf(scrollToTopTrigger) }
     LaunchedEffect(scrollToTopTrigger) {
         when (
@@ -328,8 +322,7 @@ fun HomeScreen(
     LaunchedEffect(Unit) {
         try {
             unreadCount = paginationEnvironment
-                .mobileHomeFeedHttpClient()
-                .get("$MOBILE_NOTIFICATION_MESSAGE_URL?limit=20")
+                .get("$MOBILE_NOTIFICATION_MESSAGE_URL?limit=20", profile = ZhihuRequestProfile.Mobile)
                 .json<MobileNotificationMessageOverview>()
                 .totalUnreadCount
         } catch (_: Exception) {
@@ -347,18 +340,6 @@ fun HomeScreen(
                     }
                 }
             }
-        }
-    }
-
-    val completedPageCount = viewModel.completedPageCount
-    LaunchedEffect(completedPageCount) {
-        if (completedPageCount > 0 &&
-            currentRecommendationMode == RecommendationMode.WEB &&
-            settings.getString(QUALITY_FILTER_MODE_PREFERENCE_KEY, QualityFilterMode.RULES.name) == QualityFilterMode.HIDE.name &&
-            viewModel.displayItems.isEmpty() &&
-            !viewModel.isEnd
-        ) {
-            viewModel.loadMore(paginationEnvironment)
         }
     }
 
@@ -392,7 +373,8 @@ fun HomeScreen(
                 }
                 if (cachedItems.isNotEmpty()) {
                     remoteHistory.awaitRecentPage()
-                    val unreadCachedItems = remoteHistory.filterRemoteReads(cachedItems)
+                    paginationEnvironment.scheduleCloudReadHistorySync()
+                    val unreadCachedItems = remoteHistory.filterStrongReads(cachedItems, paginationEnvironment.homeFeedReadContentKeys())
                     if (unreadCachedItems.isEmpty()) {
                         viewModel.refresh(paginationEnvironment)
                     } else {
@@ -416,7 +398,8 @@ fun HomeScreen(
                 .toSet()
             val lastVisible = items.indexOfLast { it.stableKey in visibleKeys }
             val candidates = items.drop(lastVisible + 1)
-            val keptKeys = remoteHistory.filterRemoteReads(candidates).map { it.stableKey }.toSet()
+            val localReadKeys = paginationEnvironment.homeFeedReadContentKeys()
+            val keptKeys = remoteHistory.filterStrongReads(candidates, localReadKeys).map { it.stableKey }.toSet()
             val removedKeys = candidates.filterNot { it.stableKey in keptKeys }.map { it.stableKey }.toSet()
             // The user may have scrolled while the database query was suspended.
             val currentVisibleKeys = listState.layoutInfo.visibleItemsInfo
@@ -426,7 +409,7 @@ fun HomeScreen(
             for (index in viewModel.displayItems.lastIndex downTo protectedEnd + 1) {
                 if (viewModel.displayItems[index].stableKey in removedKeys) viewModel.displayItems.removeAt(index)
             }
-            viewModel.latestLoadedDisplayItems.value = remoteHistory.filterRemoteReads(viewModel.latestLoadedDisplayItems.value)
+            viewModel.latestLoadedDisplayItems.value = remoteHistory.filterStrongReads(viewModel.latestLoadedDisplayItems.value, localReadKeys)
         }
     }
 
@@ -709,6 +692,10 @@ fun HomeScreen(
                         bottom = innerPadding.calculateBottomPadding() + readingPlayerOverlayPadding,
                     ),
                     onLoadMore = { viewModel.loadMore(paginationEnvironment) },
+                    isEnd = { viewModel.isEnd },
+                    // 首页的数据源已经在同一批次内续取过滤后的空页。
+                    repeatLoadMore = false,
+                    loadMoreItemCount = settledFeedSize,
                     footer = ProgressIndicatorFooter,
                     key = { item -> item.stableKey },
                     topContent = {
@@ -749,56 +736,16 @@ fun HomeScreen(
                                             { Text(accept.text) }
                                         },
                                         onAccept = {
-                                            val accept = notification.accept
-                                            markRead()
-                                            when (accept?.key) {
-                                                HOME_NOTIFICATION_ACTION_OPEN_URL -> {
-                                                    accept.value
-                                                        ?.jsonPrimitive
-                                                        ?.contentOrNull
-                                                        ?.let(openExternalUrl::invoke)
-                                                }
-                                                HOME_NOTIFICATION_ACTION_OPEN_WEBVIEW -> {
-                                                    accept.value
-                                                        ?.jsonPrimitive
-                                                        ?.contentOrNull
-                                                        ?.let(openWebViewUrl::invoke)
-                                                }
-                                                HOME_NOTIFICATION_ACTION_OPEN_UPDATE_SETTINGS -> {
-                                                    navigator.onNavigate(Account.SystemAndUpdateSettings())
-                                                }
-                                                HOME_NOTIFICATION_ACTION_OPEN_PIN -> {
-                                                    accept.value?.jsonPrimitive?.contentOrNull?.toLongOrNull()?.let {
-                                                        navigator.onNavigate(Pin(it))
-                                                    }
-                                                }
-                                                HOME_NOTIFICATION_ACTION_OPEN_ANSWER -> {
-                                                    accept.value?.jsonPrimitive?.contentOrNull?.toLongOrNull()?.let {
-                                                        navigator.onNavigate(Article(type = ArticleType.Answer, id = it))
-                                                    }
-                                                }
-                                                HOME_NOTIFICATION_ACTION_OPEN_ARTICLE -> {
-                                                    accept.value?.jsonPrimitive?.contentOrNull?.toLongOrNull()?.let {
-                                                        navigator.onNavigate(Article(type = ArticleType.Article, id = it))
-                                                    }
-                                                }
-                                                HOME_NOTIFICATION_ACTION_SET_SETTING -> {
-                                                    val setting = accept.value?.jsonObject
-                                                    val name = setting?.get("setting_name")?.jsonPrimitive?.contentOrNull
-                                                    when (setting?.get("value_type")?.jsonPrimitive?.contentOrNull) {
-                                                        "boolean" -> setting["value"]?.jsonPrimitive?.booleanOrNull?.let {
-                                                            settings.putBoolean(name!!, it)
-                                                        }
-                                                        "string" -> setting["value"]?.jsonPrimitive?.contentOrNull?.let {
-                                                            settings.putString(name!!, it)
-                                                        }
-                                                        "int" -> setting["value"]?.jsonPrimitive?.intOrNull?.let {
-                                                            settings.putInt(name!!, it)
-                                                        }
-                                                    }
-                                                }
-                                                else -> userMessages.showShortMessage("当前版本不支持此通知操作")
+                                            when (val action = notification.accept?.action) {
+                                                is HomeNotificationAction.OpenUrl ->
+                                                    if (action.inWebView) openWebViewUrl(action.url) else openExternalUrl(action.url)
+                                                is HomeNotificationAction.Navigate -> navigator.onNavigate(action.destination)
+                                                is HomeNotificationAction.SetBoolean -> settings.putBoolean(action.name, action.value)
+                                                is HomeNotificationAction.SetString -> settings.putString(action.name, action.value)
+                                                is HomeNotificationAction.SetInt -> settings.putInt(action.name, action.value)
+                                                null -> return@AnnouncementCard
                                             }
+                                            markRead()
                                         },
                                         dismiss = { Text(notification.dismiss) },
                                         onDismiss = markRead,

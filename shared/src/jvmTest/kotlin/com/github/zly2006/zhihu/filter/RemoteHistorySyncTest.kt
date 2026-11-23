@@ -17,6 +17,8 @@
 
 package com.github.zly2006.zhihu.filter
 
+import com.github.zly2006.zhihu.account.ZhihuAccountClient
+import com.github.zly2006.zhihu.account.ZhihuRequestProfile
 import com.github.zly2006.zhihu.data.FeedDisplayItem
 import com.github.zly2006.zhihu.data.ZhihuJson
 import com.github.zly2006.zhihu.data.toFeedDisplayItemNavDestinationJson
@@ -24,6 +26,8 @@ import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
 import com.github.zly2006.zhihu.platform.MapSettingsStore
 import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
+import com.github.zly2006.zhihu.viewmodel.filter.CloudReadHistoryRecord
+import com.github.zly2006.zhihu.viewmodel.filter.ContentOpenEvent
 import com.github.zly2006.zhihu.viewmodel.filter.getContentFilterDatabase
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -111,7 +115,7 @@ class RemoteHistorySyncTest {
             assertEquals(1, fixture.requests.size)
             fixture.gate!!.complete(Unit)
             job.join()
-            assertEquals(emptyList(), fixture.sync.filterRemoteReads(listOf(card)))
+            assertEquals(emptyList(), fixture.sync.filterStrongReads(listOf(card)))
             assertEquals(1, fixture.requests.size) // applying the late result performs no recommendation fetch
         } finally {
             fixture.close()
@@ -134,6 +138,33 @@ class RemoteHistorySyncTest {
         }
     }
 
+    @Test
+    fun cachedAnswersUseAllReadSourcesEvenWhenOtherFilteringIsDisabled() = runTest {
+        val fixture = Fixture()
+        try {
+            fixture.dao.insert(ContentOpenEvent(contentType = "answer", contentId = "1", openFrom = ContentOpenFrom.HOME_FEED))
+            fixture.database.cloudReadHistoryDao().upsertRecords(
+                listOf(CloudReadHistoryRecord(contentType = "answer", contentId = "2", readTime = 100, syncedAt = 120)),
+            )
+            val cards = (1L..4L).map { id ->
+                FeedDisplayItem(
+                    title = "回答 $id",
+                    summary = null,
+                    details = "",
+                    feed = null,
+                    navDestinationJson = Article(id = id, type = ArticleType.Answer, questionId = 99).toFeedDisplayItemNavDestinationJson(),
+                )
+            }
+            val localKeys = setOf("answer:3", "article:4")
+            assertEquals(listOf(cards.last()), fixture.sync.filterStrongReads(cards, localKeys))
+            fixture.settings.putBoolean("enableContentFilter", false)
+            assertEquals(listOf(cards.last()), fixture.sync.filterStrongReads(cards, localKeys))
+            assertEquals(emptyList(), fixture.requests)
+        } finally {
+            fixture.close()
+        }
+    }
+
     private class Fixture {
         val database = getContentFilterDatabase(createTempDirectory("remote-history").resolve("filter.db").toFile())
         val dao = database.contentOpenEventDao()
@@ -143,9 +174,9 @@ class RemoteHistorySyncTest {
         var gate: CompletableDeferred<Unit>? = null
         private val client = HttpClient(MockEngine { respond("{}") })
         private val environment = object : PaginationEnvironment {
-            override fun httpClient() = client
+            override val accountClient: ZhihuAccountClient? = null
 
-            override fun authenticatedCookies() = emptyMap<String, String>()
+            override fun httpClient(profile: ZhihuRequestProfile) = client
 
             override suspend fun fetchJson(url: String, include: String): JsonObject {
                 assertEquals("", include)
@@ -156,7 +187,7 @@ class RemoteHistorySyncTest {
 
             override suspend fun handleFetchFailure(tag: String?, error: Exception) = Unit
         }
-        val sync = RemoteHistorySync(settings, dao)
+        val sync = RemoteHistorySync(settings, dao, database.cloudReadHistoryDao())
         val feedEnvironment = sync.feedEnvironment(environment)
 
         fun start(scope: CoroutineScope) = sync.start(scope, environment)

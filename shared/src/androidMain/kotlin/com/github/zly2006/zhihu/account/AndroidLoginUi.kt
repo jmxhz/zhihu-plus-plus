@@ -41,7 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.app.NotificationManagerCompat
-import com.github.zly2006.zhihu.data.AccountData
+import com.github.zly2006.zhihu.data.ZHIHU_ANDROID_USER_AGENT
 import com.github.zly2006.zhihu.ui.components.WebviewComp
 import com.github.zly2006.zhihu.ui.components.setupUpWebviewClient
 import com.github.zly2006.zhihu.util.telemetry
@@ -80,7 +80,11 @@ actual fun decodePhoneLoginCaptchaImage(content: String) = runCatching {
 actual fun QrLoginPane(onLoginSuccess: (String) -> Unit) {
     val context = LocalContext.current
     val accountStore = rememberZhihuAccountStore()
+    val cookies = remember { accountStore.session.cookies.toMutableMap() }
+    val client = rememberLoginHttpClient(cookies)
     SharedQrLoginPane(
+        client = client,
+        cookies = cookies,
         onLoginSuccess = { cookies ->
             if (accountStore.login(cookies.toMutableMap())) {
                 telemetry(context, "login")
@@ -90,7 +94,6 @@ actual fun QrLoginPane(onLoginSuccess: (String) -> Unit) {
                 false
             }
         },
-        initialCookies = AccountData.data.cookies,
     )
 }
 
@@ -155,7 +158,7 @@ private fun configureWebLogin(
             request: WebResourceRequest,
         ): Boolean {
             if (request.url.toString() == ZHIHU_HOME_URL) {
-                webView.settings.userAgentString = AccountData.ANDROID_USER_AGENT
+                webView.settings.userAgentString = ZHIHU_ANDROID_USER_AGENT
             }
             return request.url?.scheme == "zhihu"
         }

@@ -20,6 +20,7 @@ package com.github.zly2006.zhihu.viewmodel.feed
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.data.Feed
 import com.github.zly2006.zhihu.data.FeedDisplayItem
 import com.github.zly2006.zhihu.data.navDestination
@@ -29,17 +30,26 @@ import com.github.zly2006.zhihu.navigation.Article
 import com.github.zly2006.zhihu.navigation.ArticleType
 import com.github.zly2006.zhihu.navigation.QuestionAnswerNavigator
 import com.github.zly2006.zhihu.navigation.zhihuQuestionFeedsUrl
+import com.github.zly2006.zhihu.util.formatRelativeTime
 import com.github.zly2006.zhihu.viewmodel.FeedDisplayEnvironment
 import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
-import com.github.zly2006.zhihu.viewmodel.deleteSigned
-import com.github.zly2006.zhihu.viewmodel.postSigned
 
 open class QuestionFeedViewModel(
     private val questionId: Long,
 ) : BaseFeedViewModel() {
     var sortOrder by mutableStateOf("default")
         private set
+
+    /**
+     * 已加载的问题详情，随导航条目存活。
+     *
+     * 问题页头部的高度由详情和话题决定；返回时若详情尚未恢复，头部会先变矮再长回去，而列表
+     * 恢复的滚动位置只记录“顶部那一项 + 项内偏移”，偏移量一旦按变矮的头部计算就会落到后面的
+     * 回答上。保留详情可让返回后的头部立即保持离开前的高度。
+     */
+    var questionDetail by mutableStateOf<DataHolder.Question?>(null)
+        internal set
 
     override val initialUrl: String
         get() = zhihuQuestionFeedsUrl(questionId, limit = 20, order = sortOrder)
@@ -57,7 +67,12 @@ open class QuestionFeedViewModel(
                 authorName = target.author?.name ?: "未知作者",
                 avatarSrc = target.author?.avatarUrl,
                 summary = target.excerpt,
-                details = target.detailsText,
+                // 列表里带上回答时间，便于快速分辨回答的早晚；老 API 或广告可能没有时间。
+                details = if (target.createdTime > 0) {
+                    "${target.detailsText} · ${formatRelativeTime(target.createdTime)}"
+                } else {
+                    target.detailsText
+                },
                 feed = feed,
                 title = "",
             )
@@ -99,9 +114,9 @@ open class QuestionFeedViewModel(
             if (environment.authenticatedCookies()["d_c0"] == null) return
             val url = "https://www.zhihu.com/api/v4/questions/$questionId/followers"
             if (follow) {
-                environment.postSigned(url)
+                environment.post(url)
             } else {
-                environment.deleteSigned(url)
+                environment.delete(url)
             }
         } catch (e: Exception) {
             environment.handleFetchFailure("QuestionFeedViewModel", e)

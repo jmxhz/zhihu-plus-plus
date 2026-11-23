@@ -18,6 +18,7 @@
 package com.github.zly2006.zhihu.viewmodel.za
 
 import androidx.lifecycle.viewModelScope
+import com.github.zly2006.zhihu.account.ZhihuRequestProfile
 import com.github.zly2006.zhihu.data.CommonFeed
 import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.data.Feed
@@ -40,10 +41,8 @@ import com.github.zly2006.zhihu.viewmodel.feed.dedupeHomeFeedQuestionCards
 import com.github.zly2006.zhihu.viewmodel.feed.homeFeedContentKey
 import com.github.zly2006.zhihu.viewmodel.feed.replaceHomeFeedItemsWithFilteredResult
 import com.github.zly2006.zhihu.viewmodel.feed.shouldContinueHomeFeedAfterPage
-import com.github.zly2006.zhihu.viewmodel.postSigned
 import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
-import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.setBody
 import io.ktor.http.Url
@@ -96,7 +95,7 @@ class AndroidHomeFeedViewModel :
     }
 
     private suspend fun fetchPage(environment: PaginationEnvironment): Boolean {
-        val response = environment.mobileHomeFeedHttpClient().get(lastPaging?.next ?: initialUrl)
+        val response = environment.get(lastPaging?.next ?: initialUrl, profile = ZhihuRequestProfile.Mobile)
         if (!response.status.isSuccess()) {
             throw IllegalStateException("Android home feed request failed with status ${response.status}")
         }
@@ -173,7 +172,7 @@ class AndroidHomeFeedViewModel :
                     else -> null
                 }
                 if (payloadItem != null) {
-                    environment.postSigned("https://www.zhihu.com/lastread/touch") {
+                    environment.post("https://www.zhihu.com/lastread/touch") {
                         header("x-requested-with", "fetch")
                         setBody(
                             MultiPartFormDataContent(

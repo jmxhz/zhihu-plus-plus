@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
+import com.github.zly2006.zhihu.account.ZhihuRequestProfile
 import com.github.zly2006.zhihu.data.MOBILE_NOTIFICATION_MESSAGE_URL
 import com.github.zly2006.zhihu.data.MobileNotificationAuthor
 import com.github.zly2006.zhihu.data.MobileNotificationColumnHead
@@ -112,8 +113,7 @@ class NotificationViewModel :
         try {
             val url = lastPaging?.next ?: initialUrl
             val json = environment
-                .mobileHomeFeedHttpClient()
-                .get(url.replace("http://", "https://"))
+                .get(url.replace("http://", "https://"), profile = ZhihuRequestProfile.Mobile)
                 .jsonObject()
             val page = ZhihuJson.decodeJson<MobileNotificationMessageOverview>(json)
             val rawData = json["data"]?.jsonArray ?: JsonArray(emptyList())
@@ -167,7 +167,7 @@ class NotificationViewModel :
         if ((categoryUnreadCounts[category] ?: 0) <= 0) return true
 
         return try {
-            val response = environment.mobileHomeFeedHttpClient().post(category.readAllUrl)
+            val response = environment.post(category.readAllUrl, profile = ZhihuRequestProfile.Mobile)
             if (!response.status.isSuccess()) {
                 Log.e("NotificationViewModel", "Failed to mark ${category.entryName} notifications as read: ${response.status}")
                 false
@@ -218,8 +218,7 @@ class NotificationTimelineViewModel(
                 ?: error("NotificationSettingsStore is required for notification pagination")
             val url = lastPaging?.next ?: initialUrl
             val json = environment
-                .mobileHomeFeedHttpClient()
-                .get(url.replace("http://", "https://"))
+                .get(url.replace("http://", "https://"), profile = ZhihuRequestProfile.Mobile)
                 .jsonObject()
             val rawData = json["data"]?.jsonArray ?: JsonArray(emptyList())
             val data = rawData.mapNotNull {
@@ -267,7 +266,7 @@ class NotificationTimelineViewModel(
     }
 
     suspend fun markAsRead(environment: MobileHomeFeedEnvironment): Boolean = try {
-        val response = environment.mobileHomeFeedHttpClient().post(readAllUrl)
+        val response = environment.post(readAllUrl, profile = ZhihuRequestProfile.Mobile)
         if (!response.status.isSuccess()) {
             Log.e("NotificationTimelineViewModel", "Failed to mark $entryName notifications as read: ${response.status}")
             false
@@ -295,6 +294,18 @@ class PrivateMessageViewModel(
     var isSending by mutableStateOf(false)
         private set
 
+    private var isRefreshingLatest = false
+    private var refreshGeneration = 0
+
+    // 发送确认只证明这一条消息存在，不能作为消息列表已连续同步的边界。
+    private val pendingSentIds = mutableSetOf<String>()
+
+    override fun refresh(environment: PaginationEnvironment) {
+        refreshGeneration += 1
+        pendingSentIds.clear()
+        super.refresh(environment)
+    }
+
     suspend fun sendMessage(
         content: String,
         environment: MobileHomeFeedEnvironment,
@@ -304,7 +315,7 @@ class PrivateMessageViewModel(
         isSending = true
         errorMessage = null
         return try {
-            val response = environment.mobileHomeFeedHttpClient().post(MOBILE_PRIVATE_MESSAGE_URL) {
+            val response = environment.post(MOBILE_PRIVATE_MESSAGE_URL, profile = ZhihuRequestProfile.Mobile) {
                 contentType(ContentType.Application.FormUrlEncoded)
                 header("X-Zse-93", "101_1_1.0")
                 val form = Parameters
@@ -335,6 +346,7 @@ class PrivateMessageViewModel(
                 )
                 if (allData.none { it.stableId == message.stableId }) {
                     allData.add(0, message)
+                    pendingSentIds.add(message.stableId)
                 }
                 true
             }
@@ -348,23 +360,86 @@ class PrivateMessageViewModel(
         }
     }
 
+    /**
+     * 静默增量拉取最新消息。保留已经加载的历史分页，轮询失败时也不打断当前会话。
+     */
+    suspend fun refreshLatest(environment: MobileHomeFeedEnvironment) {
+        if (isLoading || isSending || isRefreshingLatest) return
+
+        isRefreshingLatest = true
+        val generation = refreshGeneration
+        try {
+            val client = environment.accountClient
+            val knownIds = allData.mapTo(mutableSetOf()) { it.stableId } - pendingSentIds
+            val incoming = mutableListOf<ZhihuPrivateMessage>()
+            val visitedUrls = mutableSetOf<String>()
+            var pageUrl = initialUrl
+            var firstPagePaging: ZhihuPaging? = null
+
+            while (true) {
+                val url = pageUrl.replace("http://", "https://")
+                val json = (client?.get(url, ZhihuRequestProfile.Mobile) ?: environment.get(url, ZhihuRequestProfile.Mobile)).jsonObject()
+                val page = ZhihuJson.decodeJson<ZhihuPrivateMessagePage>(json)
+                if (generation != refreshGeneration) return
+                if (firstPagePaging == null) firstPagePaging = page.paging
+                incoming += page.data
+
+                val overlapsKnownMessage = page.data.any { it.stableId in knownIds }
+                val nextUrl = page.paging.next
+                if (knownIds.isEmpty() || overlapsKnownMessage || page.paging.isEnd) {
+                    break
+                }
+                if (nextUrl.isBlank() || !visitedUrls.add(nextUrl)) return
+                pageUrl = nextUrl
+            }
+
+            var olderMessageId: String? = null
+            incoming
+                .distinctBy(ZhihuPrivateMessage::stableId)
+                .asReversed()
+                .forEach { message ->
+                    val existingIndex = allData.indexOfFirst { it.stableId == message.stableId }
+                    val anchorIndex = olderMessageId?.let { id -> allData.indexOfFirst { it.stableId == id } }
+                    if (existingIndex >= 0 && (anchorIndex == null || existingIndex == anchorIndex - 1)) {
+                        if (allData[existingIndex] != message) allData[existingIndex] = message
+                    } else {
+                        if (existingIndex >= 0) allData.removeAt(existingIndex)
+                        // 同秒消息也按服务端顺序插到更旧的消息前，保留未出现在本轮响应中的发送消息。
+                        val insertionIndex = olderMessageId?.let { id -> allData.indexOfFirst { it.stableId == id } }
+                            ?: allData.indexOfFirst { it.createdTime < message.createdTime }.takeIf { it >= 0 }
+                            ?: allData.size
+                        allData.add(insertionIndex, message)
+                    }
+                    olderMessageId = message.stableId
+                }
+            pendingSentIds.removeAll(incoming.map { it.stableId }.toSet())
+
+            if (knownIds.isEmpty()) {
+                lastPaging = firstPagePaging
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.e("PrivateMessageViewModel", "Failed to refresh latest private messages", e)
+        } finally {
+            isRefreshingLatest = false
+        }
+    }
+
     override suspend fun fetchFeeds(environment: PaginationEnvironment) {
         try {
             coroutineScope {
-                val client = environment.mobileHomeFeedHttpClient()
+                val client = environment.accountClient
                 val peerRequest = if (peer == null) {
                     async {
-                        client
-                            .get("$MOBILE_PRIVATE_MESSAGE_USER_URL/$peerId")
-                            .jsonObject()
+                        val url = "$MOBILE_PRIVATE_MESSAGE_USER_URL/$peerId"
+                        (client?.get(url, ZhihuRequestProfile.Mobile) ?: environment.get(url, ZhihuRequestProfile.Mobile)).jsonObject()
                     }
                 } else {
                     null
                 }
                 val pageRequest = async {
-                    client
-                        .get((lastPaging?.next ?: initialUrl).replace("http://", "https://"))
-                        .jsonObject()
+                    val url = (lastPaging?.next ?: initialUrl).replace("http://", "https://")
+                    (client?.get(url, ZhihuRequestProfile.Mobile) ?: environment.get(url, ZhihuRequestProfile.Mobile)).jsonObject()
                 }
 
                 val json = pageRequest.await()

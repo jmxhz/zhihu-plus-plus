@@ -17,6 +17,8 @@
 
 package com.github.zly2006.zhihu.viewmodel.comment
 
+import com.github.zly2006.zhihu.account.ZhihuAccountClient
+import com.github.zly2006.zhihu.account.ZhihuRequestProfile
 import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.data.ZhihuJson
 import com.github.zly2006.zhihu.navigation.Article
@@ -72,13 +74,13 @@ private class FetchableCommentViewModel(
 
     override fun createCommentItem(comment: DataHolder.Comment, article: NavDestination) = CommentItem(comment, null)
 
-    override fun submitComment(
+    override suspend fun submitComment(
         content: NavDestination,
         commentText: String,
         environment: ZhihuApiEnvironment,
         replyToCommentId: String?,
-        onSuccess: () -> Unit,
-    ) = Unit
+        syncToPin: Boolean,
+    ): Boolean = false
 
     suspend fun fetch(environment: PaginationEnvironment) = fetchFeeds(environment)
 }
@@ -89,9 +91,9 @@ private fun commentListEnvironment(
     statusText: String = "",
     canReply: Boolean = true,
 ): PaginationEnvironment = object : PaginationEnvironment {
-    override fun httpClient() = HttpClient(MockEngine { error("Unexpected HTTP request") })
+    override val accountClient: ZhihuAccountClient? = null
 
-    override fun authenticatedCookies() = emptyMap<String, String>()
+    override fun httpClient(profile: ZhihuRequestProfile) = HttpClient(MockEngine { error("Unexpected HTTP request") })
 
     override suspend fun fetchJson(url: String, include: String): JsonObject {
         requests += url

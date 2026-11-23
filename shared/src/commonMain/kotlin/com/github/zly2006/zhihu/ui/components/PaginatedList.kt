@@ -37,6 +37,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -46,6 +47,8 @@ import com.github.zly2006.zhihu.ui.rememberObservedSetting
 import com.github.zly2006.zhihu.ui.subscreens.DEFAULT_SHOW_CONTENT_END_MARKER
 import com.github.zly2006.zhihu.ui.subscreens.PREF_SHOW_CONTENT_END_MARKER
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlin.time.Duration.Companion.milliseconds
 
 val ProgressIndicatorFooter: @Composable (LazyListState) -> Unit = { state ->
     Box(
@@ -101,13 +104,14 @@ private fun uniqueDuplicatePaginatedListKey(
 @Composable
 private fun <T> LazyItemScope.PaginatedListItem(
     item: T,
+    animateItemPlacement: Boolean,
     itemContent: @Composable LazyItemScope.(T) -> Unit,
 ) {
     Box(
         modifier = Modifier.animateItem(
             fadeInSpec = spring(stiffness = Spring.StiffnessMediumLow),
             fadeOutSpec = spring(stiffness = Spring.StiffnessMediumLow),
-            placementSpec = spring(stiffness = Spring.StiffnessMediumLow),
+            placementSpec = if (animateItemPlacement) spring(stiffness = Spring.StiffnessMediumLow) else null,
         ),
     ) {
         itemContent(item)
@@ -122,7 +126,10 @@ fun <T> PaginatedList(
     contentPadding: PaddingValues = PaddingValues(0.dp),
     listState: LazyListState = rememberLazyListState(),
     reverseLayout: Boolean = false,
+    animateItemPlacement: Boolean = true,
     isEnd: () -> Boolean = { false },
+    repeatLoadMore: Boolean = true,
+    loadMoreItemCount: Int = items.size,
     footer: @Composable ((LazyListState) -> Unit)? = null,
     key: ((T) -> Any)? = null,
     topContent: LazyListScope.() -> Unit = {},
@@ -146,11 +153,20 @@ fun <T> PaginatedList(
         }
     }
 
-    LaunchedEffect(shouldLoadMore, items.size, isEnd()) {
-        if (shouldLoadMore && items.isNotEmpty() && !isEnd()) {
-            onLoadMore()
-            // 留一帧给调用方发布新数据或标记列表结束。
-            delay(50)
+    if (repeatLoadMore) {
+        LaunchedEffect(shouldLoadMore, loadMoreItemCount, isEnd()) {
+            while (shouldLoadMore && loadMoreItemCount > 0 && !isEnd()) {
+                onLoadMore()
+                // 留一帧给调用方发布新数据或标记列表结束。
+                delay(50.milliseconds)
+            }
+        }
+    } else {
+        LaunchedEffect(loadMoreItemCount, isEnd()) {
+            if (loadMoreItemCount > 0 && !isEnd()) {
+                snapshotFlow { shouldLoadMore }.first { it }
+                onLoadMore()
+            }
         }
     }
 
@@ -165,11 +181,11 @@ fun <T> PaginatedList(
         if (key != null) {
             val itemKeys = uniquePaginatedListKeys(items, key)
             itemsIndexed(items, key = { index, _ -> itemKeys[index] }) { _, item ->
-                PaginatedListItem(item, itemContent)
+                PaginatedListItem(item, animateItemPlacement, itemContent)
             }
         } else {
             items(items) { item ->
-                PaginatedListItem(item, itemContent)
+                PaginatedListItem(item, animateItemPlacement, itemContent)
             }
         }
 

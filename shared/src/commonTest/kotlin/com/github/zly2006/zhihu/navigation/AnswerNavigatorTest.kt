@@ -12,7 +12,6 @@ package com.github.zly2006.zhihu.navigation
 import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.viewmodel.ArticleViewModel.CachedAnswerContent
 import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
-import io.ktor.client.HttpClient
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -75,9 +74,7 @@ class AnswerNavigatorTest {
     )
 
     private val environment = object : ZhihuApiEnvironment {
-        override fun httpClient(): HttpClient = HttpClient()
-
-        override fun authenticatedCookies(): Map<String, String> = emptyMap()
+        override val accountClient = null
 
         override suspend fun handleFetchFailure(tag: String?, error: Exception) = Unit
     }

@@ -94,7 +94,6 @@ import com.github.zly2006.zhihu.ui.components.replaceSelection
 import com.github.zly2006.zhihu.util.json
 import com.github.zly2006.zhihu.util.raiseForStatus
 import com.github.zly2006.zhihu.viewmodel.fetchContentDetail
-import com.github.zly2006.zhihu.viewmodel.postSigned
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
 import io.ktor.client.request.header
 import io.ktor.client.request.setBody
@@ -206,7 +205,7 @@ fun WriteAnswerScreen(
                 val xsrf = environment.authenticatedCookies()["_xsrf"]
                     ?: error("缺少 _xsrf Cookie，无法写入回答草稿；请先确保已登录。")
                 environment
-                    .postSigned("https://www.zhihu.com/api/v4/questions/${destination.questionId}/draft") {
+                    .post("https://www.zhihu.com/api/v4/questions/${destination.questionId}/draft") {
                         contentType(ContentType.Application.Json)
                         header(
                             HttpHeaders.Referrer,
@@ -222,7 +221,7 @@ fun WriteAnswerScreen(
                     }.raiseForStatus(dumpRequest = true)
                 if (publish) {
                     val response = environment
-                        .postSigned("https://www.zhihu.com/api/v4/content/publish") {
+                        .post("https://www.zhihu.com/api/v4/content/publish") {
                             contentType(ContentType.Application.Json)
                             header("x-xsrftoken", xsrf)
                             setBody(
@@ -327,16 +326,15 @@ fun WriteAnswerScreen(
         val answerId = existingAnswerId ?: return@LaunchedEffect
         if (content.text.isNotBlank()) return@LaunchedEffect
         isLoadingExistingAnswer = true
-        runCatching {
-            environment.fetchContentDetail(
+        try {
+            val answer = environment.fetchContentDetail(
                 Article(type = ArticleType.Answer, id = answerId),
             ) as? DataHolder.Answer
-        }.onSuccess { answer ->
             if (answer != null && content.text.isBlank()) {
                 tocEnabled = answer.settings?.tableOfContents?.enabled ?: false
                 content = TextFieldValue(zhihuHtmlToMarkdown(answer.editableContent ?: answer.content))
             }
-        }.onFailure { e ->
+        } catch (e: Exception) {
             errorDialogMessage = buildWriteOperationErrorMessage("加载已有回答失败", e)
         }
         isLoadingExistingAnswer = false
@@ -350,7 +348,7 @@ fun WriteAnswerScreen(
                         text =
                             when {
                                 isDetecting || isLoadingExistingAnswer -> "正在检测已有回答..."
-                                existingAnswerId != null -> "编辑已有回答"
+                                existingAnswerId != null -> "编辑回答"
                                 else -> "写回答"
                             },
                     )

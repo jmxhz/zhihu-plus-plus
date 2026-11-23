@@ -20,7 +20,6 @@ package com.github.zly2006.zhihu.viewmodel.comment
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.viewModelScope
 import com.github.zly2006.zhihu.data.DataHolder
 import com.github.zly2006.zhihu.data.ZhihuJson
 import com.github.zly2006.zhihu.navigation.Article
@@ -35,14 +34,14 @@ import com.github.zly2006.zhihu.util.jsonObject
 import com.github.zly2006.zhihu.viewmodel.CommentItem
 import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
-import com.github.zly2006.zhihu.viewmodel.postSigned
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
-import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -175,47 +174,54 @@ class RootCommentViewModel(
         return commentItem
     }
 
-    override fun submitComment(
+    override suspend fun submitComment(
         content: NavDestination,
         commentText: String,
         environment: ZhihuApiEnvironment,
         replyToCommentId: String?,
-        onSuccess: () -> Unit,
-    ) {
-        if (commentText.isBlank()) return
+        syncToPin: Boolean,
+    ): Boolean {
+        if (commentText.isBlank()) return false
 
-        viewModelScope.launch {
-            try {
-                val requestBody = content.buildSubmitCommentBody(commentText, replyToCommentId)
+        try {
+            val requestBody = content.buildSubmitCommentBody(
+                commentText = commentText,
+                replyToCommentId = replyToCommentId,
+                syncToPin = syncToPin,
+            )
 
-                val response = environment.postSigned(content.submitCommentUrl) {
-                    contentType(ContentType.Application.Json)
-                    setBody(requestBody)
-                }
-
-                if (response.status.isSuccess()) {
-                    // 评论成功后，把它添加到第一个。
-                    val model = ZhihuJson.decodeJson<DataHolder.Comment>(response.jsonObject())
-                    allData.add(0, model)
-                    onSuccess()
-                } else {
-                    errorMessage = "评论发送失败: ${response.status}"
-                }
-            } catch (e: Exception) {
-                errorMessage = "评论发送异常: ${e.message}"
+            val response = environment.post(content.submitCommentUrl) {
+                contentType(ContentType.Application.Json)
+                setBody(requestBody)
             }
+
+            if (response.status.isSuccess()) {
+                // 评论成功后，把它添加到第一个。
+                val model = ZhihuJson.decodeJson<DataHolder.Comment>(response.jsonObject())
+                allData.add(0, model)
+                return true
+            } else {
+                errorMessage = "评论发送失败: ${response.status}"
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            errorMessage = "评论发送异常: ${e.message}"
         }
+        return false
     }
 }
 
 internal fun NavDestination.buildSubmitCommentBody(
     commentText: String,
     replyToCommentId: String?,
+    syncToPin: Boolean = false,
 ): JsonObject {
     val escapedText = commentText.escapeCommentHtml()
+    val effectiveReplyId = replyToCommentId ?: (this as? CommentHolder)?.commentId
+    val rootTarget = (this as? CommentHolder)?.article ?: this
     return buildJsonObject {
         put("content", "<p>$escapedText</p>")
-        replyToCommentId?.let { put("reply_comment_id", it) }
+        effectiveReplyId?.let { put("reply_comment_id", it) }
         if (this@buildSubmitCommentBody is SegmentCommentHolder) {
             // `unfriendly_check` 和 `selected_settings` 均为可选字段，发布段评时无需提交。
             put(
@@ -241,6 +247,13 @@ internal fun NavDestination.buildSubmitCommentBody(
                             )
                         },
                     )
+                },
+            )
+        } else if (syncToPin && rootTarget !is SegmentCommentHolder) {
+            put(
+                "selected_settings",
+                buildJsonArray {
+                    add(JsonPrimitive("publish_sync_pin"))
                 },
             )
         }

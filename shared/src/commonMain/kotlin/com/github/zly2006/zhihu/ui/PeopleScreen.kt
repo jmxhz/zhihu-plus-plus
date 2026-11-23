@@ -120,14 +120,14 @@ import com.github.zly2006.zhihu.viewmodel.PaginationViewModel
 import com.github.zly2006.zhihu.viewmodel.ProfileLoadEnvironment
 import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
 import com.github.zly2006.zhihu.viewmodel.addReadHistory
-import com.github.zly2006.zhihu.viewmodel.deleteSigned
 import com.github.zly2006.zhihu.viewmodel.feed.BaseFeedViewModel
-import com.github.zly2006.zhihu.viewmodel.postSigned
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.compose.resources.painterResource
 import zhihu.shared.generated.resources.Res
@@ -274,7 +274,10 @@ class PeopleColumnContributionsViewModel(
         get() = "https://www.zhihu.com/api/v4/members/${person.userTokenOrId}/column-contributions"
 
     override val include: String
-        get() = "data[*].articles_count,followers,author"
+        get() = "data[*].column.articles_count"
+
+    override fun decodePage(environment: PaginationEnvironment, rawData: JsonArray): List<DataHolder.Column> =
+        super.decodePage(environment, JsonArray(rawData.map { it.jsonObject.getValue("column") }))
 }
 
 class PeopleFollowingCollectionsViewModel(
@@ -400,9 +403,9 @@ class PersonViewModel(
         val followersUrl = "https://www.zhihu.com/api/v4/members/${person.urlToken}/followers"
         val newFollowingState = !isFollowing
         val response = if (newFollowingState) {
-            environment.postSigned(followersUrl)
+            environment.post(followersUrl)
         } else {
-            environment.deleteSigned(followersUrl)
+            environment.delete(followersUrl)
         }
         val jojo = response.raiseForStatus().jsonObject()
         followerCount = jojo["follower_count"]?.jsonPrimitive?.int ?: (followerCount + if (newFollowingState) 1 else -1)
@@ -413,9 +416,9 @@ class PersonViewModel(
         val blockUrl = "https://www.zhihu.com/api/v4/members/${person.urlToken}/actions/block"
         val newBlockingState = !isBlocking
         if (newBlockingState) {
-            environment.postSigned(blockUrl)
+            environment.post(blockUrl)
         } else {
-            environment.deleteSigned(blockUrl)
+            environment.delete(blockUrl)
         }.raiseForStatus()
         isBlocking = newBlockingState
     }
@@ -511,6 +514,9 @@ private fun DataHolder.Answer.toPeopleAnswerDisplayItem(): FeedDisplayItem {
         authorBio = author.headline,
         avatarSrc = author.avatarUrl,
         excerpt = excerpt,
+        authorId = author.id,
+        authorUrlToken = author.urlToken,
+        questionId = question.id,
     )
     return FeedDisplayItem(
         title = question.title,
@@ -531,6 +537,8 @@ private fun DataHolder.Article.toPeopleArticleDisplayItem(): FeedDisplayItem {
         authorBio = author.headline,
         avatarSrc = author.avatarUrl,
         excerpt = excerpt,
+        authorId = author.id,
+        authorUrlToken = author.urlToken,
     )
     return FeedDisplayItem(
         title = title,
@@ -1359,12 +1367,18 @@ private fun ColumnListItem(
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
-            Text(
-                text = "${column.articlesCount} 文章 · ${column.followerCount.coerceAtLeast(column.followers)} 关注",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp),
+            val counts = listOfNotNull(
+                column.articlesCount?.let { "$it 文章" },
+                listOfNotNull(column.followerCount, column.followers).maxOrNull()?.let { "$it 关注" },
             )
+            if (counts.isNotEmpty()) {
+                Text(
+                    text = counts.joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
     }
 }

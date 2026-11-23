@@ -87,6 +87,7 @@ import com.github.zly2006.zhihu.navigation.Person
 import com.github.zly2006.zhihu.navigation.Pin
 import com.github.zly2006.zhihu.navigation.Question
 import com.github.zly2006.zhihu.navigation.resolveContent
+import com.github.zly2006.zhihu.navigation.withListPreview
 import com.github.zly2006.zhihu.platform.rememberExternalUrlOpener
 import com.github.zly2006.zhihu.platform.rememberSettingsStore
 import com.github.zly2006.zhihu.reading.ReadingPlaybackStatus
@@ -115,10 +116,8 @@ import com.github.zly2006.zhihu.util.twoDigitString
 import com.github.zly2006.zhihu.viewmodel.ContentLoadEnvironment
 import com.github.zly2006.zhihu.viewmodel.ZhihuApiEnvironment
 import com.github.zly2006.zhihu.viewmodel.addReadHistory
-import com.github.zly2006.zhihu.viewmodel.deleteSigned
 import com.github.zly2006.zhihu.viewmodel.loadVotersPage
 import com.github.zly2006.zhihu.viewmodel.nextUrlOrNull
-import com.github.zly2006.zhihu.viewmodel.postSigned
 import com.github.zly2006.zhihu.viewmodel.rememberPaginationEnvironment
 import com.github.zly2006.zhihu.viewmodel.replaceOrAppendUniqueVoters
 import io.ktor.client.request.setBody
@@ -152,9 +151,9 @@ private suspend fun togglePinLike(
 ): PinLikeResult {
     val endpoint = "https://www.zhihu.com/api/v4/pins/${pin.id}/voters/up"
     val jojo = if (isLiked) {
-        environment.deleteSigned(endpoint).jsonObject()
+        environment.delete(endpoint).jsonObject()
     } else {
-        environment.postSigned(endpoint).jsonObject()
+        environment.post(endpoint).jsonObject()
     }
     return PinLikeResult(
         isLiked = !isLiked,
@@ -172,7 +171,7 @@ private suspend fun submitPinPollVote(
             add(optionId)
         }
     }.toString()
-    environment.postSigned("https://www.zhihu.com/api/v4/polls/$pollId") {
+    environment.post("https://www.zhihu.com/api/v4/polls/$pollId") {
         contentType(ContentType.Application.Json)
         setBody(requestBody)
     }
@@ -669,7 +668,9 @@ private fun PinContent(
                     .testTag(PIN_SCREEN_LINK_CARD_TAG)
                     .clickable {
                         val targetUrl = linkCard.url.takeIf { it.isNotBlank() }
-                        val destination = targetUrl?.let(::resolveContent)
+                        val destination = targetUrl
+                            ?.let(::resolveContent)
+                            ?.withListPreview(title = relatedTitle, excerpt = relatedPreview)
 
                         if (destination != null) {
                             navigator.onNavigate(destination)

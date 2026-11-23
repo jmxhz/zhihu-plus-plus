@@ -19,10 +19,11 @@ package com.github.zly2006.zhihu
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.github.zly2006.zhihu.data.AccountData
+import com.github.zly2006.zhihu.account.ZhihuRequestProfile
+import com.github.zly2006.zhihu.account.androidZhihuAccountStore
 import com.github.zly2006.zhihu.test.InstrumentedTestEnvironment
 import com.github.zly2006.zhihu.test.ZhihuMockApi
-import com.github.zly2006.zhihu.util.signFetchRequest
+import com.github.zly2006.zhihu.util.signZhihuFetchRequest
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.runBlocking
@@ -38,20 +39,22 @@ class AccountDataNetworkInstrumentedTest {
     private val context
         get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+    private val accountStore get() = androidZhihuAccountStore(context)
+
     @Before
     fun setUp() {
         InstrumentedTestEnvironment.reseed(context)
     }
 
     @Test
-    fun fetchGetAutomaticallySignsOnlyZhihuWebApiRequests() = runBlocking {
-        AccountData.fetchGet(context, "https://www.zhihu.com/api/v4/search/hot_search")
+    fun webProfileSignsRequestsAndMobileProfileDoesNot() = runBlocking {
+        accountStore.client.get("https://www.zhihu.com/api/v4/search/hot_search")
         val webApiRequest = lastRequestContaining("/api/v4/search/hot_search")
         assertTrue(webApiRequest.hasHeader("x-zse-93"))
         assertTrue(webApiRequest.hasHeader("x-zse-96"))
         assertTrue(webApiRequest.hasHeader("x-requested-with"))
 
-        AccountData.fetchGet(context, "https://api.zhihu.com/moments/recent?type=raw")
+        accountStore.client.get("https://api.zhihu.com/moments/recent?type=raw", profile = ZhihuRequestProfile.Mobile)
         val androidApiRequest = lastRequestContaining("https://api.zhihu.com/moments/recent")
         assertFalse(androidApiRequest.hasHeader("x-zse-93"))
         assertFalse(androidApiRequest.hasHeader("x-zse-96"))
@@ -59,8 +62,8 @@ class AccountDataNetworkInstrumentedTest {
 
     @Test
     fun explicitSignFetchRequestIsNotDuplicatedByAutomaticSigning() = runBlocking {
-        AccountData.fetchGet(context, "https://www.zhihu.com/api/v4/search/hot_search") {
-            signFetchRequest()
+        accountStore.client.get("https://www.zhihu.com/api/v4/search/hot_search") {
+            signZhihuFetchRequest(accountStore.session.cookies)
         }
 
         val request = lastRequestContaining("/api/v4/search/hot_search")
@@ -71,9 +74,8 @@ class AccountDataNetworkInstrumentedTest {
 
     @Test
     fun verifyLoginUsesSignedRequestAndReturnsFalseForUnauthorized() = runBlocking {
-        val login = AccountData.verifyLogin(
-            context = context,
-            cookies = mapOf(
+        val login = accountStore.login(
+            cookies = mutableMapOf(
                 "z_c0" to "android-test-zc0",
                 "d_c0" to "android-test-dc0",
             ),
@@ -87,9 +89,8 @@ class AccountDataNetworkInstrumentedTest {
             body = """{"error":{"message":"unauthorized"}}""",
             status = HttpStatusCode.Unauthorized,
         )
-        val unauthorizedLogin = AccountData.verifyLogin(
-            context = context,
-            cookies = mapOf(
+        val unauthorizedLogin = accountStore.login(
+            cookies = mutableMapOf(
                 "z_c0" to "expired-zc0",
                 "d_c0" to "android-test-dc0",
             ),

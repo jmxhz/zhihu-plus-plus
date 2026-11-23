@@ -22,13 +22,14 @@ import com.github.zly2006.zhihu.data.OnlineHistoryItem
 import com.github.zly2006.zhihu.data.ZhihuJson.decodeJson
 import com.github.zly2006.zhihu.data.ZhihuPaging
 import com.github.zly2006.zhihu.data.navDestination
-import com.github.zly2006.zhihu.data.target
 import com.github.zly2006.zhihu.navigation.resolveContent
 import com.github.zly2006.zhihu.platform.SettingsStore
 import com.github.zly2006.zhihu.util.Log
 import com.github.zly2006.zhihu.viewmodel.PaginationEnvironment
+import com.github.zly2006.zhihu.viewmodel.filter.CloudReadHistoryDao
 import com.github.zly2006.zhihu.viewmodel.filter.ContentOpenEvent
 import com.github.zly2006.zhihu.viewmodel.filter.ContentOpenEventDao
+import com.github.zly2006.zhihu.viewmodel.filter.ContentType
 import com.github.zly2006.zhihu.viewmodel.filter.getContentFilterDatabase
 import io.ktor.http.URLProtocol
 import io.ktor.http.Url
@@ -54,6 +55,7 @@ private const val LAST_ATTEMPT_KEY = "lastRemoteHistorySync"
 class RemoteHistorySync(
     private val settings: SettingsStore,
     private val dao: ContentOpenEventDao = getContentFilterDatabase().contentOpenEventDao(),
+    private val cloudDao: CloudReadHistoryDao = getContentFilterDatabase().cloudReadHistoryDao(),
 ) {
     private var job: Job? = null
     private var recentPage = CompletableDeferred(Unit)
@@ -93,21 +95,25 @@ class RemoteHistorySync(
         withTimeoutOrNull(300L) { recentPage.await() }
     }
 
-    /** Reads only; unlike the foreground pipeline this does not record another exposure. */
-    suspend fun filterRemoteReads(items: List<FeedDisplayItem>): List<FeedDisplayItem> {
-        if (!settings.getBoolean("enableContentFilter", true) || settings.getBoolean("reverseBlock", false)) return items
-        val identities = items.associateWith { item ->
+    /** 筛选缓存或尚未显示的卡片，避免再次记录曝光。 */
+    suspend fun filterStrongReads(
+        items: List<FeedDisplayItem>,
+        localReadKeys: Set<String> = emptySet(),
+    ): List<FeedDisplayItem> {
+        val filterAnswersOnly = !settings.getBoolean("enableContentFilter", true) || settings.getBoolean("reverseBlock", false)
+        val identities = items.map { item ->
             item.navDestination
                 ?.let(ContentOpenEventSupport::toTrackedContentIdentity)
-                ?.let { "${it.type}:${it.id}" }
+                ?.takeIf { !filterAnswersOnly || it.type == ContentType.ANSWER }
         }
-        val read = dao.getRemotelySyncedContentKeysByKeys(identities.values.filterNotNull()).toSet()
-        return items.filter { item ->
-            item.feed
-                ?.target
-                ?.author
-                ?.isFollowing == true ||
-                identities[item] !in read
+        val read = ContentOpenEventSupport.getAlreadyOpenedContentIds(
+            contentOpenEventDao = dao,
+            cloudReadHistoryDao = cloudDao,
+            content = identities.filterNotNull().map { it.type to it.id },
+            extraReadContentKeys = localReadKeys,
+        )
+        return items.filterIndexed { index, _ ->
+            identities[index]?.let(ContentOpenEventSupport::buildContentKey) !in read
         }
     }
 
